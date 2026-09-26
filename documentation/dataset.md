@@ -4,31 +4,15 @@ Récupération de donnée via C4 de hugging face
 ----------------------------------------------------------------
 1-nettoyage:
 
-C4 français
-    │
-    ▼
-Streaming
-    │
-    ▼
-Nettoyage
-    ├── Unicode
-    ├── HTML
-    ├── URLs
-    ├── emails
-    └── espaces
-    │
-    ▼
-Filtres qualité
-    ├── texte trop court
-    ├── trop de répétitions
-    ├── trop de caractères non alphabétiques
-    └── spam évident
-    │
-    ▼
-Déduplication
-    │
-    ▼
-Corpus propre
+C4 français 
+    |
+ Streaming
+    |
+ Nettoyage (Unicode, HTML, URLs, emails, espaces)
+    |
+ Filtres (qualitétexte ,trop court, trop de répétitions, trop de caractères non alphabétiques,spam évident)
+    |
+ Déduplication - Corpus propre
 
 a-installation des dépendances:
 poetry add datasets transformers torch tqdm
