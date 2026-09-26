@@ -1,6 +1,6 @@
 # Structure du projet
 
-```mermaid
+
 flowchart TD
     ROOT["llm/"]
 
@@ -39,4 +39,3 @@ flowchart TD
     MODEL --> MODEL_INIT["__init__.py"]
 
     ROOT --> README["README.md"]
-```
