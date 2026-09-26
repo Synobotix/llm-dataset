@@ -1,38 +1,42 @@
-structure du projet:
+# Structure du projet
 
-llm/
-├── pyproject.toml
-├── poetry.lock
-│
-├── data/
-│   ├── raw/
-│   │   └── .gitkeep
-│   │
-│   └── processed/
-│       └── .gitkeep
-│
-├── scripts/
-│   ├── test_c4.py
-│   └── prepare_c4.py
-|   └── clean_c4.py
-│
-├── src/
-│   └── llm/
-│       ├── __init__.py
-│       │
-│       ├── data/
-│       │   ├── __init__.py
-│       │   ├── cleaning.py
-│       │   ├── filtering.py
-│       │   └── deduplication.py
-│       │
-│       ├── tokenizer/
-│       │   └── __init__.py
-│       │
-│       ├── dataset/
-│       │   └── __init__.py
-│       │
-│       └── model/
-│           └── __init__.py
-│
-└── README.md
+```mermaid
+flowchart TD
+    ROOT["llm/"]
+
+    ROOT --> CONFIG["pyproject.toml"]
+    ROOT --> LOCK["poetry.lock"]
+
+    ROOT --> DATA["data/"]
+    DATA --> RAW["raw/"]
+    RAW --> RAW_KEEP[".gitkeep"]
+    DATA --> PROCESSED["processed/"]
+    PROCESSED --> PROCESSED_KEEP[".gitkeep"]
+
+    ROOT --> SCRIPTS["scripts/"]
+    SCRIPTS --> TEST["test_c4.py"]
+    SCRIPTS --> PREPARE["prepare_c4.py"]
+    SCRIPTS --> CLEAN["clean_c4.py"]
+
+    ROOT --> SRC["src/"]
+    SRC --> LLM["llm/"]
+
+    LLM --> INIT["__init__.py"]
+
+    LLM --> LLM_DATA["data/"]
+    LLM_DATA --> DATA_INIT["__init__.py"]
+    LLM_DATA --> CLEANING["cleaning.py"]
+    LLM_DATA --> FILTERING["filtering.py"]
+    LLM_DATA --> DEDUP["deduplication.py"]
+
+    LLM --> TOKENIZER["tokenizer/"]
+    TOKENIZER --> TOKENIZER_INIT["__init__.py"]
+
+    LLM --> DATASET["dataset/"]
+    DATASET --> DATASET_INIT["__init__.py"]
+
+    LLM --> MODEL["model/"]
+    MODEL --> MODEL_INIT["__init__.py"]
+
+    ROOT --> README["README.md"]
+```

@@ -4,15 +4,18 @@ Récupération de donnée via C4 de hugging face
 ----------------------------------------------------------------
 1-nettoyage:
 
-C4 français 
-    |
- Streaming
-    |
- Nettoyage (Unicode, HTML, URLs, emails, espaces)
-    |
- Filtres (qualitétexte ,trop court, trop de répétitions, trop de caractères non alphabétiques,spam évident)
-    |
- Déduplication - Corpus propre
+# C4 français
+
+## Pipeline de préparation
+
+```mermaid
+flowchart TD
+    A["C4 français"] --> B["Streaming"]
+    B --> C["Nettoyage<br/>Unicode, HTML, URLs, emails, espaces"]
+    C --> D["Filtres de qualité<br/>Texte trop court, répétitions artificielles,<br/>caractères non alphabétiques, spam évident"]
+    D --> E["Déduplication"]
+    E --> F["Corpus propre"]
+```
 
 a-installation des dépendances:
 poetry add datasets transformers torch tqdm
