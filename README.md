@@ -1,6 +1,6 @@
 # Structure du projet
 
-
+```mermaid
 flowchart TD
     ROOT["llm/"]
 
