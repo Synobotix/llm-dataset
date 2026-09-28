@@ -42,4 +42,4 @@ flowchart TD
 
     ROOT --> README["README.md"]
 ```
-Pour en voir plus sur le projet, je vous invite à aller dans /documentation/pipeline_projet.txt
+Pour en voir plus sur le projet, je vous invite à aller dans /documentation/pipeline_project.txt
