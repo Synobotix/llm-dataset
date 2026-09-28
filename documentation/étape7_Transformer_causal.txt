@@ -1,0 +1,420 @@
+Etape 7 du pipeline_project.txt
+
+
+
+
+a-def:
+
+    Transformer causal consiste à construire le cerveau de ton LLM, c’est-à-dire le modèle qui va apprendre à prédire le prochain token.
+    À ce stade, on ne l’entraîne pas encore. L’entraînement arrive à l’étape 8.
+
+1-Token Embedding
+
+On reçoit par exemple :
+[2403, 2646, 477, 2364, ...]
+Chaque ID est transformé en un vecteur de 256 nombres.
+
+ID 2403 → [0.12, -0.43, ..., 0.27]
+ID 2646 → [0.31,  0.18, ..., -0.52]
+
+Donc :
+[batch, 256]
+      ↓
+[batch, 256, 256]
+--------------------------------------------------------------------
+2. Position Embedding
+
+Le modèle doit savoir qu'un token est à la position :
+
+0, 1, 2, 3, ..., 255
+
+On ajoute donc un vecteur représentant chaque position.
+
+Token Embedding
+       +
+Position Embedding
+       ↓
+[batch, 256, 256]
+
+On utilisera ici des embeddings de position appris.
+----------------------------------------------------------------
+3. Les 4 Transformer Blocks
+
+C'est la partie principale.
+
+Un Transformer Block est une unité de calcul qui prend une représentation des tokens et la transforme en une représentation plus riche.
+
+Dans le modèle :
+
+Embedding
+    ↓
+Transformer Block 1
+    ↓
+Transformer Block 2
+    ↓
+Transformer Block 3
+    ↓
+Transformer Block 4
+    ↓
+Prediction
+
+Chaque bloc possède deux grandes parties :
+
+Donc un bloc fait essentiellement :
+
+Comprendre les relations entre les tokens
+        ↓
+Transformer cette information
+
+Résumé très simple
+
+Un Transformer Block du modèle fait deux choses :
+
+             TRANSFORMER BLOCK
+                    │
+          ┌─────────┴─────────┐
+          ↓                   ↓
+     ATTENTION              FFN
+          │                   │
+ "Que dois-je regarder ?"   "Comment
+          │                  transformer
+          │                  cette info ?"
+          └─────────┬─────────┘
+                    ↓
+             représentation
+                enrichie
+
+Et tu répètes cette opération 4 fois :
+
+Embedding
+    ↓
+[Block 1]
+    ↓
+[Block 2]
+    ↓
+[Block 3]
+    ↓
+[Block 4]
+    ↓
+Prediction
+
+Dans ton étape 7, on va donc coder exactement ces éléments : LayerNorm → Causal Self-Attention → résiduel → LayerNorm → FFN → résiduel, puis empiler ce bloc 4 fois.
+------------------------------------------------------------------
+4. Causal Self-Attention
+
+C'est ce qui permet au modèle de comprendre le contexte précédent.
+
+Par exemple :
+
+Le chat mange une ...
+
+Pour prédire le prochain token, le modèle peut regarder :
+
+Le
+Le chat
+Le chat mange
+Le chat mange une
+
+Mais il ne doit pas regarder le futur.
+
+La matrice d'attention sera donc masquée :
+
+✓
+✓ ✓
+✓ ✓ ✓
+✓ ✓ ✓ ✓
+
+et non :
+
+✓ ✓ ✓ ✓
+✓ ✓ ✓ ✓
+✓ ✓ ✓ ✓
+✓ ✓ ✓ ✓
+
+C'est précisément ce qui rend le Transformer causal.
+----------------------------------------------------------------------
+5. 8 têtes d'attention
+
+Ton embedding fait :
+
+256 dimensions
+
+On le divise en :
+
+8 heads
+
+Donc :
+
+256 / 8 = 32
+
+Chaque tête travaille avec 32 dimensions.
+
+256
+ ↓
+8 × 32
+
+Les différentes têtes peuvent apprendre différentes relations entre les tokens.
+-------------------------------------------------------------------------------------
+6. Feed Forward
+
+Après l'attention, chaque Transformer Block possède un petit réseau neuronal :
+
+256
+ ↓
+1024
+ ↓
+GELU
+ ↓
+256
+
+Donc :
+
+Linear(256 → 1024)
+       ↓
+     GELU
+       ↓
+Linear(1024 → 256)
+
+----------------------------------------------------------------------------
+7. Prédiction des tokens
+
+Après les 4 blocs :
+
+[batch, 256, 256]
+
+On applique :
+
+LayerNorm
+   ↓
+Linear(256 → 16000)
+
+Pourquoi 16000 ?
+
+Parce que ton tokenizer possède un vocabulaire de :
+
+16 000 tokens
+
+Le modèle doit donc produire 16 000 scores pour chaque position.
+
+Résultat :
+
+[batch, 256, 16000]
+
+Par exemple, pour un token donné :
+
+token "Le"
+      ↓
+16000 scores
+      ↓
+token 0     → -2.3
+token 1     →  1.2
+token 2     → -0.8
+...
+token 8472  →  8.7  ← score élevé
+...
+token 15999 → -1.4
+
+Ces sorties sont appelées logits.
+
+Donc concrètement, l'étape 7 consiste à créer ces fichiers
+src/llm/model/
+├── __init__.py
+├── embedding.py
+├── positional_encoding.py
+├── attention.py
+├── feed_forward.py
+├── transformer_block.py
+└── transformer.py
+
+Avec :
+
+Fichier	Rôle
+embedding.py	Transformer les IDs en vecteurs
+positional_encoding.py	Ajouter les positions
+attention.py	Causal Self-Attention
+feed_forward.py	Réseau 256 → 1024 → 256
+transformer_block.py	Construire un bloc
+transformer.py	Assembler les 4 blocs et le modèle complet
+Et surtout : étape 7 ≠ entraînement
+
+À la fin de l'étape 7, on veut simplement pouvoir faire :
+
+Input
+[batch, 256]
+      ↓
+Transformer
+      ↓
+Logits
+[batch, 256, 16000]
+
+-------------------------------------------------------------------------
+-------------------------------------------------------------------------
+
+b-Génération des codes:
+L’ordre logique sera Embedding → Position → Attention → FFN → Block → Transformer complet, avec un petit test de forme après chaque composant.
+
+1. src/llm/model/embedding.py
+Son rôle est de transformer les IDs des tokens en vecteurs de taille 256.
+
+Vocabulaire = 16 000
+Dimension   = 256
+
+matrice d'embedding aura conceptuellement :
+[16000, 256]
+
+2. src/llm/model/positional_encoding.py
+information de position aux embeddings.
+
+Token IDs
+   ↓
+Token Embedding
+[2, 256, 256]
+   +
+Position Embedding
+[2, 256, 256]
+   ↓
+Représentation avec contenu + position
+
+On va utiliser un embedding de position appris, avec :
+
+max_sequence_length = 256
+embedding_dim = 256
+
+3.src/llm/model/attention.py
+        Le module recevra :
+        [batch, sequence_length, 256]
+
+        Par exemple :
+
+        [2, 256, 256]
+
+        Puis il produira :
+
+        [2, 256, 256]
+
+        La dimension reste donc 256.
+
+        2. Les Q, K et V
+
+        À partir de x, on va construire :
+
+        Query
+        Key
+        Value
+
+        On peut utiliser une seule projection :
+
+        256 → 768
+
+        car :
+
+        256 × 3 = 768
+
+        Puis on découpe :
+
+        768
+        ↓
+        256 Q
+        256 K
+        256 V
+
+        Ensuite, chaque représentation est divisée entre les 8 heads :
+
+        256
+        ↓
+        8 × 32
+
+        On obtient :
+
+        Q → [batch, 8, 256, 32]
+        K → [batch, 8, 256, 32]
+        V → [batch, 8, 256, 32]
+        3. Calcul de l'attention
+
+        Pour chaque head :
+
+        Q × Kᵀ
+
+        donne :
+
+        [batch, 8, 256, 256]
+
+        Puis :
+
+        scores / √32
+
+        Ensuite on applique le masque causal pour empêcher chaque token de regarder le futur.
+
+        Puis :
+
+        softmax()
+
+        et enfin :
+
+        attention × V
+
+4.src/llm/model/feed_forward.py
+
+        Rôle du Feed Forward
+
+        Le Feed Forward Network (FFN) intervient après l'attention.
+
+        L'attention permet au modèle de faire :
+
+        « Quels autres tokens sont importants pour moi ? »
+
+        Le FFN fait plutôt :
+
+        « Maintenant que j'ai récupéré cette information, comment puis-je transformer ma représentation ? »
+
+        Dans l' architecture :
+
+        Input
+        [batch, 256, 256]
+            ↓
+        Linear
+        256 → 1024
+            ↓
+        GELU
+            ↓
+        Linear
+        1024 → 256
+            ↓
+        Output
+        [batch, 256, 256]
+
+        Il est important que la dimension finale reste 256, car elle doit pouvoir être additionnée à l'entrée avec la connexion résiduelle.
+
+
+5.src/llm/model/transformer_block.py
+    assemble tous les blocks:
+                        Transformer Block
+                           │
+              ┌────────────┴────────────┐
+              ↓                         ↓
+          LayerNorm                 LayerNorm
+              ↓                         ↓
+     Causal Self-Attention          Feed Forward
+              ↓                         ↓
+              + ←── Résiduel            + ←── Résiduel
+              │                         │
+              └───────────┬─────────────┘
+                          ↓
+                         x
+
+6.src/llm/model/transformer.py
+    Il va assembler :
+
+    Token Embedding
+        ↓
+    Position Embedding
+        ↓
+    Transformer Block × 4
+        ↓
+    Final LayerNorm
+        ↓
+    Linear 256 → 16000
+        ↓
+    Logits
+
+    C'est ce fichier qui constituera le modèle causal complet avant de passer à l'étape 8 : l'entraînement sur Colab.

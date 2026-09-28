@@ -1,0 +1,37 @@
+ Etape 4 du pipeline_project.txt
+
+ 
+ 
+                    C4 propre
+                       │
+             ┌─────────┴─────────┐
+             ▼                   ▼
+       Split dataset          Tokenizer
+             │                   │
+             ▼                   ▼
+       train / validation    vocabulaire
+             │                   │
+             └─────────┬─────────┘
+                       ▼
+                     Étape 5
+
+------------------------------------------------------
+Split du C4
+
+Le split du dataset consiste simplement à diviser le dataset propre en plusieurs parties, principalement pour séparer les données utilisées pour apprendre de celles utilisées pour vérifier le modèle.
+
+On va séparer ton c4_clean.jsonl en :
+
+data/processed/
+├── c4_clean.jsonl
+├── train.jsonl
+└── validation.jsonl
+
+split 90 % entraînement / 10 % validation, avec un seed fixe pour obtenir exactement le même résultat à chaque exécution.
+
+train.jsonl → apprendre: C'est la partie que le modèle va réellement utiliser pendant son entraînement.
+validation.jsonl → vérifier
+    -Les documents de validation ne servent pas à modifier les poids du modèle.
+    -Ils servent à vérifier si le modèle apprend réellement à généraliser sur des textes qu'il n'a pas vus pendant l'entraînement.
+
+----------------------------------------------------------

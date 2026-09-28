@@ -40,6 +40,7 @@ flowchart TD
 
     ROOT --> README["README.md"]
 ```
+C4 nettoyé → Teachers OpenRouter → Dataset distillé → Tokenizer → Transformer Student → Entraînement Colab.
 
 pipeline pour la distilation:
 

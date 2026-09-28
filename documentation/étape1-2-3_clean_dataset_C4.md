@@ -1,3 +1,5 @@
+Etape 1 - 2 - 3 du pipeline_project.txt
+
 Récupération de donnée via C4 de hugging face
 
 

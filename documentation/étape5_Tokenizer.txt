@@ -1,0 +1,93 @@
+Etape 5 du pipeline_project.txt
+
+
+Tokenizer
+a-def
+    Le tokenizer est le composant qui transforme le texte en nombres que le Transformer peut comprendre.
+
+    Un Transformer ne peut pas prendre directement :
+    "Bonjour, comment allez-vous ?"
+
+    Il travaille avec des vecteurs et des nombres. Le tokenizer fait donc le pont
+
+b-mode d'utilisation
+        1. Le tokenizer découpe le texte
+        Prenons :
+        "Les artisans travaillent rapidement."
+
+        Avec notre tokenizer BPE, on pourrait obtenir quelque chose comme :
+        ["Les", " artisans", " travaillent", " rapidement", "."]
+
+        Le découpage exact dépendra du vocabulaire que notre tokenizer aura appris.
+        BPE peut aussi découper un mot en plusieurs morceaux si le mot est rare :
+        "rapidement"
+            ↓
+        [" rapide", "ment"]
+
+        2. Chaque token reçoit un ID
+        Le tokenizer construit un vocabulaire.
+        Par exemple, de manière simplifiée :
+
+        Token              ID
+        ──────────────────────
+        <pad>               0
+        <unk>               1
+        <bos>               2
+        <eos>               3
+        Les                125
+        artisans          842
+        travaillent      3912
+        rapidement       7281
+        .                  13
+
+        Donc :
+        "Les artisans travaillent rapidement."
+        devient par exemple :
+        [125, 842, 3912, 7281, 13]
+        Ce sont ces IDs qui seront transmis au modèle.
+
+        3. Le vocabulaire est appris sur notre C4
+        C'est important dans notre projet.
+
+        Nous avons :
+
+        C4 propre
+            ↓
+        train.jsonl
+            ↓
+        Tokenizer BPE
+            ↓
+        vocabulaire
+
+        Le tokenizer analyse les textes du train.jsonl et apprend quelles unités de texte sont fréquentes et comment les combiner.
+
+        Avec :
+        VOCAB_SIZE = 16_000
+        on demande environ 16 000 tokens différents dans le vocabulaire.
+        Ce n'est donc pas le Transformer qui apprend le vocabulaire. Le tokenizer le construit avant l'entraînement du Transformer.
+
+c- code 
+
+    Créer le script
+
+    On utilise :
+
+    tokenizer/
+    └── train_tokenizer.py
+
+    Le script va :
+
+    lire train.jsonl
+    -récupérer uniquement le champ text
+    -entraîner un tokenizer BPE
+    -utiliser un vocabulaire cible de 16 000 tokens
+    -ajouter les tokens spéciaux
+    -sauvegarder le tokenizer
+
+    À la fin, tu dois avoir :
+    tokenizer/
+    ├── train_tokenizer.py
+    ├── tokenizer.json
+    ├── vocab.json
+    └── config.json
+
