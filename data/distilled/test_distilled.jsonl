@@ -1,0 +1,2 @@
+{"source": "Python est un langage de programmation.", "prompt": "Explique le contenu du texte.", "response": "Python est un langage de programmation interprété et polyvalent.", "teacher": "MODELE_A"}
+{"source": "FastAPI est un framework Python.", "prompt": "Explique le contenu du texte.", "response": "FastAPI est un framework Python utilisé pour créer des API web.", "teacher": "MODELE_B"}
