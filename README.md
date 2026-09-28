@@ -40,3 +40,79 @@ flowchart TD
 
     ROOT --> README["README.md"]
 ```
+
+pipeline pour la distilation:
+
+                         ┌─────────────────────┐
+                         │       C4 RAW        │
+                         └──────────┬──────────┘
+                                    │
+                                    ▼
+                         ┌─────────────────────┐
+                         │ 1. DATA PROCESSING  │
+                         │                     │
+                         │ Cleaning            │
+                         │ Deduplication       │
+                         │ Filtering           │
+                         └──────────┬──────────┘
+                                    │
+                                    ▼
+                         ┌─────────────────────┐
+                         │   DATASET PROPRE    │
+                         └──────────┬──────────┘
+                                    │
+                                    ▼
+                 ┌──────────────────────────────────┐
+                 │       2. DISTILLATION            │
+                 │                                  │
+                 │  Dataset → Prompt Generator      │
+                 │                 │                │
+                 │        ┌────────┼────────┐       │
+                 │        ▼        ▼        ▼       │
+                 │     Teacher A Teacher B Teacher C│
+                 │        │        │        │       │
+                 │        └────────┼────────┘       │
+                 │                 ▼                │
+                 │       Response Validation        │
+                 └─────────────────┬────────────────┘
+                                   │
+                                   ▼
+                         ┌─────────────────────┐
+                         │ DATASET DISTILLÉ    │
+                         └──────────┬──────────┘
+                                    │
+                                    ▼
+                 ┌──────────────────────────────────┐
+                 │       3. PRÉPARATION             │
+                 │                                  │
+                 │  Tokenizer                       │
+                 │      ↓                           │
+                 │  Token IDs                       │
+                 │      ↓                           │
+                 │  Séquences                       │
+                 │      ↓                           │
+                 │  Batches                         │
+                 └─────────────────┬────────────────┘
+                                   │
+                                   ▼
+                 ┌──────────────────────────────────┐
+                 │          4. TRAINING             │
+                 │                                  │
+                 │       Transformer Student        │
+                 │              ↓                   │
+                 │          Embeddings              │
+                 │              ↓                   │
+                 │       Transformer Blocks         │
+                 │              ↓                   │
+                 │           Linear                 │
+                 │              ↓                   │
+                 │            Logits                │
+                 │              ↓                   │
+                 │      Cross Entropy Loss          │
+                 │              ↓                   │
+                 │       Backpropagation            │
+                 │              ↓                   │
+                 │           AdamW                  │
+                 │              │                   │
+                 │              └───────► Student   │
+                 └──────────────────────────────────┘

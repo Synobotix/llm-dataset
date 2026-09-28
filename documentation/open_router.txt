@@ -1,0 +1,446 @@
+C4 nettoyé
+    │
+    ▼
+generate_distillation.py
+    │
+    ├──► prompts.py
+    │       │
+    │       ▼
+    │     Prompt
+    │
+    ├──► teachers.py
+    │       │
+    │       ▼
+    │     Teacher
+    │       │
+    │       ▼
+    │    openrouter.py
+    │       │
+    │       ▼
+    │    OpenRouter API
+    │       │
+    │       ▼
+    │    Réponse + modèle utilisé
+    │
+    ├──► validator.py
+    │       │
+    │       ▼
+    │    Validation
+    │
+    └──► storage.py
+            │
+            ▼
+data/distilled/distilled.jsonl
+
+2. openrouter.py
+Rôle
+
+openrouter.py est la couche qui communique directement avec l'API OpenRouter.
+
+Il est responsable de :
+
+récupérer la clé API depuis .env ;
+construire la requête HTTP ;
+envoyer le prompt au modèle ;
+gérer les modèles de fallback ;
+récupérer la réponse ;
+récupérer le modèle réellement utilisé ;
+vérifier finish_reason ;
+détecter une génération interrompue.
+
+Fonction principale
+generate_response(
+    models,
+    prompt,
+    temperature,
+    max_tokens
+)
+
+Elle retourne :
+
+(response, model_used)
+Exemple
+Teacher demandé
+      ↓
+OpenRouter
+      ↓
+Réponse générée
+      +
+Modèle réellement utilisé
+finish_reason
+
+Le champ :
+
+finish_reason = choice.get("finish_reason")
+
+permet de savoir comment la génération s'est terminée.
+
+Par exemple :
+
+stop
+
+→ génération terminée normalement.
+
+length
+
+→ la limite max_tokens a été atteinte.
+
+Dans ton test, 512 puis 2048 tokens pouvaient être entièrement consommés par le raisonnement du modèle. Avec 8200, les trois générations se sont terminées avec :
+
+finish_reason = stop
+
+--------------------------------------------------------------
+
+3. teachers.py
+Rôle
+
+teachers.py définit les modèles enseignants utilisés pour la distillation.
+
+Il sépare donc la logique :
+
+Quel teacher utiliser ?
+
+de :
+
+Comment appeler OpenRouter ?
+Exemple actuel
+TEACHERS = [
+    "deepseek/deepseek-v4.1-flash",
+]
+
+Puis :
+
+generate_with_teachers(...)
+
+appelle :
+
+generate_response(...)
+
+dans openrouter.py.
+
+Architecture
+teachers.py
+     │
+     │ sélectionne
+     ▼
+Teacher
+     │
+     ▼
+openrouter.py
+     │
+     ▼
+OpenRouter
+Évolution prévue
+
+Plus tard, tu pourras avoir plusieurs teachers :
+
+Teacher A
+Teacher B
+Teacher C
+Teacher D
+...
+
+Mais comme OpenRouter limite la liste de fallback à 3 modèles par requête, il faudra organiser les teachers en groupes ou gérer une rotation.
+
+----------------------------------------------------------
+
+4. prompts.py
+Rôle
+
+prompts.py construit le prompt envoyé au teacher.
+
+Il transforme :
+
+Texte C4
+
+en :
+
+Prompt d'instruction
+Fonction
+build_distillation_prompt(text)
+
+Le prompt demande notamment au teacher de :
+
+comprendre le texte ;
+identifier les informations importantes ;
+produire une réponse claire ;
+rester autonome ;
+ne pas inventer d'informations ;
+retourner uniquement la réponse finale.
+Flux
+C4
+ │
+ ▼
+build_distillation_prompt()
+ │
+ ▼
+Prompt
+ │
+ ▼
+Teacher
+
+Cette séparation est importante car tu pourras modifier la stratégie de génération sans modifier openrouter.py.
+
+
+---------------------------------------------------------------
+
+5. validator.py
+Rôle
+
+validator.py vérifie si la réponse générée par le teacher peut être conservée.
+
+Fonction :
+
+validate_teacher_response(
+    response,
+    min_length=50,
+    max_length=5000
+)
+
+Elle retourne :
+
+(True, "Réponse valide")
+
+ou :
+
+(False, "raison du rejet")
+Vérifications actuelles
+1. Réponse inexistante
+Réponse vide
+
+→ rejet.
+
+2. Réponse vide après nettoyage
+response.strip()
+
+→ rejet.
+
+3. Réponse trop courte
+
+Par défaut :
+
+< 50 caractères
+
+→ rejet.
+
+4. Réponse trop longue
+
+Par défaut :
+
+> 5000 caractères
+
+→ rejet.
+
+Flux
+Réponse du teacher
+       │
+       ▼
+   Validator
+       │
+   ┌───┴────┐
+   ▼        ▼
+Valide    Rejetée
+   │
+   ▼
+Storage
+
+Plus tard, ce fichier pourra devenir beaucoup plus intelligent : détection de réponses incohérentes, répétitions, contenu indésirable, etc.
+
+---------------------------------------------------------
+
+6. storage.py
+Rôle
+
+storage.py est responsable de sauvegarder les données distillées.
+
+Il utilise le format :
+
+JSONL
+
+Chaque exemple correspond à une ligne JSON.
+
+Fonction
+save_distilled_example(
+    output_path,
+    source,
+    prompt,
+    response,
+    teacher
+)
+Structure d'un exemple
+{
+    "source": "...",
+    "prompt": "...",
+    "response": "...",
+    "teacher": "deepseek/deepseek-v4.1-flash"
+}
+Pourquoi JSONL ?
+
+Parce que le dataset peut devenir très volumineux.
+
+Au lieu d'avoir :
+
+un énorme fichier JSON
+
+tu as :
+
+ligne 1 → exemple 1
+ligne 2 → exemple 2
+ligne 3 → exemple 3
+...
+
+C'est pratique pour traiter les données progressivement.
+
+7. generate_distillation.py
+Rôle
+
+C'est le chef d'orchestre de toute la distillation.
+
+Il ne contient pas directement toute la logique technique. Il appelle les différents modules.
+
+Étapes
+Étape 1 — Charger C4
+load_c4_documents()
+
+Lit :
+
+data/processed/c4_clean.jsonl
+
+et récupère les textes.
+
+Étape 2 — Construire le prompt
+prompt = build_distillation_prompt(text)
+
+Utilise :
+
+prompts.py
+Étape 3 — Appeler le teacher
+response, model_used = generate_with_teachers(...)
+
+Utilise :
+
+teachers.py
+      ↓
+openrouter.py
+      ↓
+OpenRouter
+Étape 4 — Valider
+is_valid, reason = validate_teacher_response(response)
+
+Utilise :
+
+validator.py
+Étape 5 — Sauvegarder
+
+Si la réponse est valide :
+
+save_distilled_example(...)
+
+Utilise :
+
+storage.py
+
+-----------------------------------------------
+
+
+8. Flux complet d'un document
+
+Pour un document C4 :
+
+Document C4
+     │
+     ▼
+load_c4_documents()
+     │
+     ▼
+build_distillation_prompt()
+     │
+     ▼
+Prompt
+     │
+     ▼
+generate_with_teachers()
+     │
+     ▼
+openrouter.py
+     │
+     ▼
+OpenRouter API
+     │
+     ▼
+Teacher
+     │
+     ▼
+Réponse
+     │
+     ▼
+finish_reason ?
+     │
+     ├── length ──► erreur / rejet
+     │
+     └── stop
+          │
+          ▼
+   validator.py
+          │
+      ┌───┴────┐
+      ▼        ▼
+    valide   rejetée
+      │
+      ▼
+ storage.py
+      │
+      ▼
+distilled.jsonl
+
+----------------------------------------------------------
+
+
+9. Résultat obtenu actuellement
+
+Ton test a validé le pipeline :
+
+C4 nettoyé
+    ↓
+Prompt
+    ↓
+Teacher DeepSeek
+    ↓
+OpenRouter
+    ↓
+Validation
+    ↓
+JSONL
+
+Résultat du test :
+
+Documents traités : 3
+Réponses validées : 3
+Réponses rejetées : 0
+
+Et le fichier obtenu est :
+
+data/distilled/distilled.jsonl
+
+------------------------------------------------------------
+
+10. Responsabilité de chaque fichier
+Fichier	Responsabilité
+openrouter.py	Communication avec OpenRouter
+teachers.py	Gestion/sélection des teachers
+prompts.py	Construction des prompts
+validator.py	Validation des réponses
+storage.py	Sauvegarde en JSONL
+generate_distillation.py	Orchestration de tout le pipeline
+
+La règle architecturale importante est donc :
+
+generate_distillation.py
+        │
+        ├── prompts.py       → préparer
+        ├── teachers.py      → choisir
+        ├── openrouter.py    → appeler
+        ├── validator.py     → contrôler
+        └── storage.py       → enregistrer
+
+Ainsi, chaque fichier a une responsabilité précise, ce qui facilitera ensuite l'ajout de plusieurs teachers, le contrôle du raisonnement, le traitement de milliers de documents et éventuellement le parallélisme.
