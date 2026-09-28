@@ -1,5 +1,7 @@
 # Structure du projet
 
+Voici la structure de base du projet:
+
 ```mermaid
 flowchart TD
     ROOT["llm/"]
@@ -40,80 +42,4 @@ flowchart TD
 
     ROOT --> README["README.md"]
 ```
-C4 nettoyé → Teachers OpenRouter → Dataset distillé → Tokenizer → Transformer Student → Entraînement Colab.
-
-pipeline pour la distilation:
-
-                         ┌─────────────────────┐
-                         │       C4 RAW        │
-                         └──────────┬──────────┘
-                                    │
-                                    ▼
-                         ┌─────────────────────┐
-                         │ 1. DATA PROCESSING  │
-                         │                     │
-                         │ Cleaning            │
-                         │ Deduplication       │
-                         │ Filtering           │
-                         └──────────┬──────────┘
-                                    │
-                                    ▼
-                         ┌─────────────────────┐
-                         │   DATASET PROPRE    │
-                         └──────────┬──────────┘
-                                    │
-                                    ▼
-                 ┌──────────────────────────────────┐
-                 │       2. DISTILLATION            │
-                 │                                  │
-                 │  Dataset → Prompt Generator      │
-                 │                 │                │
-                 │        ┌────────┼────────┐       │
-                 │        ▼        ▼        ▼       │
-                 │     Teacher A Teacher B Teacher C│
-                 │        │        │        │       │
-                 │        └────────┼────────┘       │
-                 │                 ▼                │
-                 │       Response Validation        │
-                 └─────────────────┬────────────────┘
-                                   │
-                                   ▼
-                         ┌─────────────────────┐
-                         │ DATASET DISTILLÉ    │
-                         └──────────┬──────────┘
-                                    │
-                                    ▼
-                 ┌──────────────────────────────────┐
-                 │       3. PRÉPARATION             │
-                 │                                  │
-                 │  Tokenizer                       │
-                 │      ↓                           │
-                 │  Token IDs                       │
-                 │      ↓                           │
-                 │  Séquences                       │
-                 │      ↓                           │
-                 │  Batches                         │
-                 └─────────────────┬────────────────┘
-                                   │
-                                   ▼
-                 ┌──────────────────────────────────┐
-                 │          4. TRAINING             │
-                 │                                  │
-                 │       Transformer Student        │
-                 │              ↓                   │
-                 │          Embeddings              │
-                 │              ↓                   │
-                 │       Transformer Blocks         │
-                 │              ↓                   │
-                 │           Linear                 │
-                 │              ↓                   │
-                 │            Logits                │
-                 │              ↓                   │
-                 │      Cross Entropy Loss          │
-                 │              ↓                   │
-                 │       Backpropagation            │
-                 │              ↓                   │
-                 │           AdamW                  │
-                 │              │                   │
-                 │              └───────► Student   │
-                 └──────────────────────────────────┘
+Pour en voir plus sur le projet, je vous invite à aller dans /documentation/pipeline_projet.txt
