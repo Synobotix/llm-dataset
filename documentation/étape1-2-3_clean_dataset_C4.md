@@ -34,3 +34,5 @@ e-le dataset brut est conservé dans data/raw/c4_clean.jsonl
 
 f-le dataset nettoyé est conservé dans data/processed/c4_clean.jsonl
 
+d-à noter que 913 documents ont été nettoyés, et ce seront eux qui seront utilisés
+
