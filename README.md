@@ -39,3 +39,4 @@ flowchart TD
     MODEL --> MODEL_INIT["__init__.py"]
 
     ROOT --> README["README.md"]
+```
