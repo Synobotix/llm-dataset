@@ -1,0 +1,135 @@
+Etape 6 du pipeline_project.txt
+
+
+
+L'étape « Tokenisation + création des séquences » consiste à transformer ton texte brut en données numériques que le Transformer peut réellement utiliser pour apprendre.
+
+----------------------------------------------------------------------
+1. Tokenisation
+
+    Ton texte est d'abord transformé en tokens, puis chaque token en ID numérique.
+    
+    Par exemple :
+
+    Bonjour, je suis un modèle de langage.
+
+    Ton tokenizer produit quelque chose comme :
+
+    Tokens :
+    ['Bon', 'jour', ',', 'Ġje', 'Ġsuis', 'Ġun', 'ĠmodÃ¨le', 'Ġde', 'Ġlangage', '.']
+
+    Puis :
+
+    IDs :
+    [9516, 1007, 15, 431, 1069, 250, 2532, 207, 11395, 17]
+
+    Le Transformer ne reçoit donc pas directement le texte.
+
+    Il reçoit :
+
+    [9516, 1007, 15, 431, 1069, 250, 2532, ...]
+
+-------------------------------------------------------------------------
+2- Vue Global:
+
+                   ÉTAPE 5
+                     │
+                     ▼
+              ┌──────────────┐
+              │ train.jsonl  │
+              └──────┬───────┘
+                     │
+                     ▼
+               Tokenizer BPE
+                     │
+                     ▼
+              Tokens / IDs
+                     │
+                     ▼
+           Découpage en blocs
+              de 256 tokens
+                     │
+                     ▼
+          ┌────────────────────┐
+          │     Séquence       │
+          │  257 tokens        │
+          └─────────┬──────────┘
+                    │
+             décalage de 1
+              ┌─────┴─────┐
+              ▼           ▼
+           Input         Labels
+          256 IDs        256 IDs
+              │             │
+              └──────┬──────┘
+                     ▼
+             ÉTAPE 6
+
+-------------------------------------------------------------------
+3-fichier généré:
+
+Fichier créé
+    scripts/tokenize_dataset.py
+
+    Son rôle est de :
+
+    charger tokenizer/tokenizer.json ;
+    lire train.jsonl et validation.jsonl ;
+    transformer chaque texte en IDs ;
+    découper les IDs en séquences de 256 tokens ;
+    créer input_ids et labels décalés d'un token ;
+    sauvegarder les résultats.
+
+
+Fichiers produits
+
+Le script a généré :
+
+data/processed/
+├── train_tokens.jsonl          ← généré à l'étape 5
+└── validation_tokens.jsonl     ← généré à l'étape 5
+
+Chaque ligne de train_tokens.jsonl ressemble à :
+
+{
+  "input_ids": [2403, 2646, 477, 2364, "..."],
+  "labels": [2646, 477, 2364, 10737, "..."]
+}
+
+avec 256 IDs dans input_ids et 256 IDs dans labels.
+
+Résultat réel de ton exécution
+
+Tu as obtenu :
+
+Train
+├── 821 documents
+├── 623 416 tokens
+└── 2 009 séquences
+
+Validation
+├── 92 documents
+├── 84 432 tokens
+└── 282 séquences
+
+Et le test a confirmé :
+
+Nombre d'input IDs : 256
+Nombre de labels   : 256
+
+avec le décalage correct :
+
+Input :
+[2403, 2646, 477, 2364, 10737, ...]
+
+Labels :
+[2646, 477, 2364, 10737, 29, ...]
+
+Donc l'étape 5 actuellement est composée d'un seul script :
+
+scripts/tokenize_dataset.py
+
+et produit :
+
+train_tokens.jsonl
+validation_tokens.jsonl

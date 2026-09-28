@@ -1,0 +1,216 @@
+llm/
+│
+├── pyproject.toml
+├── poetry.lock
+├── README.md
+├── .gitignore
+├── .env
+│
+├── data/
+│   │
+│   ├── raw/
+│   │   ├── c4_1000.jsonl
+│   │   └── .gitkeep
+│   │
+│   ├── processed/
+│   │   ├── c4_clean.jsonl
+│   │   ├── train.jsonl
+│   │   └── validation.jsonl
+│   │
+│   └── distilled/
+│       └── distilled.jsonl
+│
+├── tokenizer/
+│   ├── train_tokenizer.py
+│   ├── tokenizer.json
+│   ├── vocab.json
+│   └── config.json
+│
+├── scripts/
+│   ├── tests
+│   ├── prepare_c4.py
+│   ├── clean_c4.py
+│   ├── split_dataset.py
+│   ├── generate_distillation.py
+│   ├── tokenize_dataset.py
+│   ├── train.py
+│   ├── evaluate.py
+│   └── inference.py
+│
+├── src/
+│   └── llm/
+│       │
+│       ├── __init__.py
+│       │
+│       ├── data/
+│       │   ├── __init__.py
+│       │   ├── cleaning.py
+│       │   ├── filtering.py
+│       │   ├── deduplication.py
+│       │   ├── dataset.py
+│       │   └── dataloader.py
+│       │
+│       ├── tokenizer/
+│       │   ├── __init__.py
+│       │   ├── tokenizer.py
+│       │   └── vocabulary.py
+│       │
+│       ├── model/
+│       │   ├── __init__.py
+│       │   ├── embedding.py
+│       │   ├── positional_encoding.py
+│       │   ├── attention.py
+│       │   ├── feed_forward.py
+│       │   ├── transformer_block.py
+│       │   └── transformer.py
+│       │
+│       ├── training/
+│       │   ├── __init__.py
+│       │   ├── loss.py
+│       │   ├── optimizer.py
+│       │   ├── scheduler.py
+│       │   ├── trainer.py
+│       │   └── checkpoint.py
+│       │
+│       ├── distillation/
+│       │   ├── __init__.py
+│       │   ├── openrouter.py
+│       │   ├── teachers.py
+│       │   ├── prompts.py
+│       │   ├── validator.py
+│       │   └── storage.py
+│       │
+│       ├── evaluation/
+│       │   ├── __init__.py
+│       │   ├── metrics.py
+│       │   └── evaluate.py
+│       │
+│       └── inference/
+│           ├── __init__.py
+│           └── generate.py
+│
+├── configs/
+│   ├── model.yaml
+│   ├── training.yaml
+│   └── tokenizer.yaml
+│
+├── checkpoints/
+│   ├── student_v1/
+│   └── student_v2/
+│
+├── logs/
+│   └── .gitkeep
+│
+└── notebooks/
+    ├── exploration.ipynb
+    └── training_colab.ipynb
+
+
+----------------------------------------------------------------------
+
+flux du projet:
+
+                         ┌─────────────────┐
+                         │    C4 brut      │
+                         └────────┬────────┘
+                                  │
+                                  ▼
+                         ┌─────────────────┐
+                         │ Nettoyage       │
+                         │ filtrage        │
+                         │ déduplication   │
+                         └────────┬────────┘
+                                  │
+                                  ▼
+                         ┌─────────────────┐
+                         │    C4 propre    │
+                         └────────┬────────┘
+                                  │
+                         ┌────────┴────────┐
+                         ▼                 ▼
+                  ┌──────────────┐  ┌─────────────────┐
+                  │   Tokenizer  │  │ Split dataset   │
+                  └──────┬───────┘  └────────┬────────┘
+                         │                   │
+                         └─────────┬─────────┘
+                                   ▼
+                         ┌─────────────────┐
+                         │ Tokenisation    │
+                         │ + séquences     │
+                         └────────┬────────┘
+                                  │
+                                  ▼
+                    ┌──────────────────────────┐
+                    │ Transformer causal      │
+                    │ Student from scratch    │
+                    └────────────┬─────────────┘
+                                 │
+                                 ▼
+                         ┌─────────────────┐
+                         │ Entraînement    │
+                         │ PyTorch / Colab │
+                         └────────┬────────┘
+                                  │
+                                  ▼
+                            ┌───────────┐
+                            │ Student v1│
+                            └─────┬─────┘
+                                  │
+                                  │
+              ┌───────────────────┘
+              │
+              │     Dataset distillé
+              │     déjà préparé
+              │     par le Teacher
+              │
+              ▼
+        ┌─────────────────────┐
+        │ Dataset distillé    │
+        │ train / validation  │
+        └──────────┬──────────┘
+                   │
+                   ▼
+        ┌─────────────────────┐
+        │ Tokenisation        │
+        │ dataset distillé    │
+        └──────────┬──────────┘
+                   │
+                   ▼
+        ┌─────────────────────┐
+        │ Distillation        │
+        │ Student v1          │
+        └──────────┬──────────┘
+                   │
+                   ▼
+             ┌───────────┐
+             │ Student v2│
+             └─────┬─────┘
+                   │
+                   ▼
+        ┌─────────────────────┐
+        │ Évaluation finale   │
+        │ loss / perplexité   │
+        │ génération          │
+        └──────────┬──────────┘
+                   │
+                   ▼
+             ┌────────────┐
+             │ Modèle     │
+             │ final      │
+             └────────────┘
+
+
+Étape 1 → C4 brut
+Étape 2 → Nettoyage
+Étape 3 → C4 propre
+Étape 4 → Split train/validation
+Étape 5 → Tokenizer
+Étape 6 → Tokenisation + séquences
+Étape 7 → Transformer causal
+Étape 8 → Pré-entraînement Colab
+Étape 9 → Student v1
+Étape 10 → Préparation du dataset distillé
+Étape 11 → Distillation
+Étape 12 → Student v2
+Étape 13 → Évaluation
+Étape 14 → Modèle final
