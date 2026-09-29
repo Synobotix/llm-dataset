@@ -1,0 +1,1021 @@
+étape 8:
+
+pipeline:
+
+1-configs/model.yaml
+2-configs/training.yaml
+3-calcul approximatif du nombre de paramètres du Student
+4-choix de batch_size / sequence_length
+5-configuration CUDA/Colab
+6-puis dataset.py → dataloader.py → trainer.py → train.py
+7-enfin un premier test d'entraînement sur quelques batches avant de lancer le vrai pré-entraînement.
+
+----------------------------------------------------------------------------------
+Paramètre du student
+
+| Paramètre                 |                    Valeur décidée |
+| ------------------------- | --------------------------------: |
+| `vocab_size`              |                        **16 000** |
+| `d_model` / embedding dim |                           **256** |
+| `num_heads`               |                             **8** |
+| `head_dim`                |                            **32** |
+| `num_layers`              |                             **4** |
+| `d_ff`                    |                         **1 024** |
+| `max_seq_len`             |                           **256** |
+| Position encoding         | **learned positional embeddings** |
+| Normalisation             |                        **Pre-LN** |
+| Attention                 |         **causal self-attention** |
+| FFN                       |                          **GELU** |
+| FFN architecture          |              **256 → 1024 → 256** |
+| Final normalization       |                     **LayerNorm** |
+| LM Head                   |                  **256 → 16 000** |
+
+
+
+------------------------------------------------
+1-configs/model.yaml
+
+Vocabulary = 8 000
+       │
+       ▼
+Embedding
+8 000 × 256
+       │
+       ▼
+┌──────────────────────┐
+│ Transformer Block 1  │
+├──────────────────────┤
+│ Transformer Block 2  │
+├──────────────────────┤
+│ Transformer Block 3  │
+├──────────────────────┤
+│ Transformer Block 4  │
+├──────────────────────┤
+│ Transformer Block 5  │
+├──────────────────────┤
+│ Transformer Block 6  │
+└──────────┬───────────┘
+           │
+           ▼
+      LM Head
+           │
+           ▼
+      8 000 logits
+
+Avec :
+
+d_model = 256
+num_heads = 8
+
+chaque tête d'attention travaille sur :
+
+256 / 8 = 32 dimensions
+
+-------------------------------------------------------------------------------
+
+2. configs/training.yaml
+
+Ton dataset contient environ :
+
+2 009 séquences
+×
+256 tokens
+≈
+514 304 tokens
+
+Avec :
+
+batch_size: 32
+
+on obtient environ :
+
+2 009 / 32 ≈ 63 steps / epoch
+
+Donc avec :
+
+epochs: 3
+
+on aura environ :
+
+63 × 3 ≈ 189 steps
+
+C'est pour cela que :
+
+warmup_steps: 20
+
+est beaucoup plus cohérent que les 500 proposés précédemment.
+
+Le scheduler
+
+On choisit :
+
+scheduler: "cosine"
+
+Le learning rate suivra approximativement :
+
+Learning rate
+     │
+     │       ╭──────╮
+     │      ╱        ╲
+     │     ╱          ╲
+     │    ╱            ╲
+     │───╯              ╲____
+     │
+     └──────────────────────────► steps
+       warmup          fin
+
+Donc :
+
+20 premiers steps
+      ↓
+warmup
+      ↓
+learning rate maximal
+      ↓
+cosine decay
+      ↓
+fin de l'entraînement
+Pourquoi gradient_clip: 1.0 ?
+
+On limite la norme des gradients :
+
+torch.nn.utils.clip_grad_norm_(
+    model.parameters(),
+    1.0
+)
+
+Cela permet d'éviter qu'un gradient extrêmement grand provoque une mise à jour trop importante.
+
+Pourquoi eval_every: 20 ?
+
+Ton entraînement est très court :
+
+≈ 189 steps
+
+Si on évaluait seulement à chaque epoch, on aurait seulement 3 évaluations.
+
+Avec :
+
+eval_every: 20
+
+on peut suivre l'évolution beaucoup plus précisément :
+
+step 20
+step 40
+step 60
+step 80
+...
+step 180
+Pourquoi save_every: 50 ?
+
+On aura environ :
+
+step 50
+step 100
+step 150
+step 189
+
+Donc quelques checkpoints raisonnables sans en créer des dizaines.
+
+Résultat
+
+Ton architecture possède maintenant :
+
+configs/
+├── model.yaml
+│
+├── training.yaml   ← maintenant défini
+│
+└── tokenizer.yaml
+
+avec :
+
+model.yaml
+    ↓
+architecture du Transformer
+
+training.yaml
+    ↓
+comment entraîner le Transformer
+
+tokenizer.yaml
+    ↓
+comment construire/utiliser le tokenizer
+
+----------------------------------------------------------------------------------------------
+
+3-calcul approximatif du nombre de paramètres du Student
+
+        A. Configuration du Student
+
+            Nous avons :
+
+            vocab_size   = 16 000
+            d_model      = 256
+            num_heads    = 8
+            num_layers   = 4
+            d_ff         = 1 024
+            max_seq_len  = 256
+
+            Avec :
+
+            head_dim = 256 / 8 = 32
+
+        B. Token Embedding
+
+            Ton vocabulaire contient :
+
+            16 000 tokens
+
+            Chaque token est représenté par un vecteur de :
+
+            256 dimensions
+
+            Donc :
+
+            16 000 × 256
+            = 4 096 000
+
+            ➡️ 4,096 millions de paramètres
+
+        C. Positional Embedding
+
+            Comme nous avons choisi des learned positional embeddings :
+
+            max_seq_len = 256
+            d_model = 256
+
+            Donc :
+
+            256 × 256
+            = 65 536
+
+            ➡️ 65 536 paramètres
+
+        D. Un Transformer Block
+
+            Nous avons 4 Transformer Blocks.
+
+            Chaque block contient principalement :
+
+            Multi-Head Self-Attention
+                    +
+            Feed Forward
+                    +
+            LayerNorm
+
+            Calculons-les.
+
+        D.1 Attention
+
+            Avec :
+
+            d_model = 256
+
+            on utilise généralement quatre projections :
+
+            Q
+            K
+            V
+            O
+
+            Chacune est une matrice :
+
+            256 × 256
+
+            Donc :
+
+            Q = 65 536
+            K = 65 536
+            V = 65 536
+            O = 65 536
+
+            Total poids :
+
+            4 × 65 536
+            = 262 144
+
+        D.2-Les biais éventuels ajoutent :
+
+            4 × 256
+            = 1 024
+
+            Donc environ :
+
+            263 168
+
+            ➡️ ~263 K paramètres pour l'attention
+
+        E. Feed Forward Network
+
+            Ton FFN est :
+
+            256 → 1024 → 256
+
+            Première projection :
+
+            256 × 1024
+            = 262 144
+
+            Deuxième :
+
+            1024 × 256
+            = 262 144
+
+            Poids :
+
+            524 288
+
+            Biais :
+
+            1024 + 256
+            = 1 280
+
+            Total :
+
+            525 568
+
+            ➡️ ~526 K paramètres
+
+        F. LayerNorm
+
+            Avec le Pre-LN, nous avons généralement deux LayerNorm par Transformer Block :
+
+            LayerNorm 1
+            LayerNorm 2
+
+            Chaque LayerNorm possède :
+
+            gamma = 256
+            beta  = 256
+
+            Donc :
+
+            512 paramètres
+
+            par LayerNorm.
+
+            Deux :
+
+            512 × 2
+            = 1 024
+
+            ➡️ 1 024 paramètres
+
+        G. Total d'un Transformer Block
+
+            On additionne :
+
+            Attention       ≈ 263 168
+            FFN             ≈ 525 568
+            LayerNorm       =   1 024
+            --------------------------------
+            Total            ≈ 789 760
+
+            Donc environ :
+
+            790 000 paramètres par block.
+
+        H. Les 4 Transformer Blocks
+
+            Nous avons :
+
+            num_layers = 4
+
+            Donc :
+
+            789 760 × 4
+            = 3 159 040
+
+            ➡️ ~3,16 millions de paramètres
+
+        I. Final LayerNorm
+
+            Après les Transformer Blocks, nous avons notre LayerNorm final :
+
+            256 × 2
+            = 512
+
+            ➡️ 512 paramètres
+
+        J. LM Head
+
+            Le modèle doit transformer les représentations de dimension 256 en probabilités sur les 16 000 tokens.
+
+            Donc :
+
+            256 → 16 000
+
+            Poids :
+
+            256 × 16 000
+            = 4 096 000
+
+            Avec un biais :
+
+            + 16 000
+
+            Donc :
+
+            4 112 000
+
+            ➡️ ~4,112 millions
+
+        K. Total
+
+            Additionnons :
+
+            Token Embedding       4 096 000
+            Positional Embedding     65 536
+            Transformer ×4        3 159 040
+            Final LayerNorm             512
+            LM Head               4 112 000
+            --------------------------------
+            TOTAL                11 433 088
+
+            Donc ton Student possède environ :
+
+            11,43 millions de paramètres
+            12. Attention au weight tying
+
+            Il existe une optimisation importante pour ton modèle.
+
+            On peut partager les poids entre :
+
+            Token Embedding
+
+            et :
+
+            LM Head
+
+            Au lieu d'avoir :
+
+            Embedding = 4 096 000
+            LM Head   = 4 096 000
+
+            on utilise la même matrice.
+
+            Dans ce cas, on économise environ :
+
+            4 096 000 paramètres
+
+            Ton modèle passerait approximativement de :
+
+            11,43 M
+
+            à :
+
+            ≈ 7,34 M paramètres
+
+            C'est une technique courante appelée weight tying.
+
+        14. Architecture finale avec les paramètres
+                            Student
+                            │
+                ┌────────────┴────────────┐
+                │                         │
+            Token Embedding          Positional Embedding
+            16 000 × 256                256 × 256
+            4,096 M                    0,066 M
+                │                         │
+                └────────────┬────────────┘
+                            ▼
+                    Transformer Block 1
+                            ~0,790 M
+                            │
+                            ▼
+                    Transformer Block 2
+                            ~0,790 M
+                            │
+                            ▼
+                    Transformer Block 3
+                            ~0,790 M
+                            │
+                            ▼
+                    Transformer Block 4
+                            ~0,790 M
+                            │
+                            ▼
+                        LayerNorm
+                            ~0,001 M
+                            │
+                            ▼
+                        LM Head
+                            4,112 M
+                            │
+                            ▼
+                        16 000 logits
+
+
+            Résumé
+
+            Token Embedding =	    4,096 M
+            Positional Embedding =	0,066 M
+            Attention × 4 =	        1,053 M
+            FFN × 4 =	            2,102 M
+            LayerNorm =	            0,0046 M
+            LM Head =	            4,112 M
+            Total	≈               11,43 M
+
+--------------------------------------------------------------------------------------------------
+4-choix de batch_size / sequence_length
+
+
+    1. Tes paramètres actuels
+
+        On part de :
+
+        vocab_size   = 16 000
+        d_model      = 256
+        num_heads    = 8
+        num_layers   = 4
+        d_ff         = 1 024
+
+        Et ton dataset tokenisé :
+
+        Train       = 2 009 séquences
+        Validation  =   282 séquences
+
+        Chaque séquence contient actuellement :
+
+        256 tokens
+        2. sequence_length = 256
+
+        Je garderais 256 pour l'étape 8.
+
+        Cela signifie que ton Transformer peut traiter :
+
+        [token₁, token₂, ..., token₂₅₆]
+
+        en une seule séquence.
+
+        Son contexte maximal est donc :
+
+        256 tokens.
+
+        Pourquoi 256 ?
+
+        Ton modèle est petit :
+
+        ≈ 11,4 M paramètres
+
+        et ton dataset est également petit.
+
+        Passer directement à :
+
+        512
+        1024
+        2048
+
+        augmenterait fortement le coût de l'attention.
+
+        L'attention a approximativement une complexité en :
+
+        O(sequence_length²)
+
+        Donc :
+
+        256² = 65 536
+        512² = 262 144
+        1024² = 1 048 576
+
+        Ainsi, passer de 256 à 512 multiplie approximativement le travail de l'attention par 4.
+
+        Pour ton premier pré-entraînement, 256 est donc un choix raisonnable.
+
+    3. batch_size = 32
+
+        Avec :
+
+        batch_size: 32
+        sequence_length: 256
+
+        un batch contient :
+
+        32 × 256
+        = 8 192 tokens
+
+        Donc à chaque step, ton modèle traite environ :
+
+        8 192 tokens.
+
+        Visuellement :
+
+                        Batch
+                        │
+            ┌───────────┼───────────┐
+            │           │           │
+            ▼           ▼           ▼
+            Seq 1       Seq 2       Seq 3 ...
+            256 tok     256 tok     256 tok
+            │           │
+            └───────────┴───────────┘
+                        │
+                        ▼
+                    32 séquences
+                        │
+                        ▼
+                    8 192 tokens
+    4. Est-ce que 32 est adapté à Colab ?
+
+        Pour ton modèle de seulement ~11,4 M paramètres, 32 devrait être une bonne valeur de départ sur un GPU Colab, sous réserve de la mémoire réellement disponible.
+
+        Mais il ne faut pas supposer que la mémoire nécessaire dépend uniquement des paramètres du modèle.
+
+        Pendant l'entraînement, le GPU doit également conserver :
+
+        Modèle
+        + gradients
+        + états AdamW
+        + activations
+        + batch
+
+        Les activations deviennent notamment plus importantes lorsque :
+
+        batch_size ↑
+        sequence_length ↑
+
+        C'est pourquoi on teste réellement la configuration sur le GPU.
+
+    5. Ton dataset avec batch_size = 32
+
+        Tu as :
+
+        2 009 séquences
+
+        Avec :
+
+        batch_size = 32
+
+        on obtient :
+
+        2009 / 32 = 62,78
+
+        Donc :
+
+        62 batches complets
+        + 1 batch partiel
+
+        soit 63 steps par epoch si drop_last=False.
+
+        Je recommande :
+
+        DataLoader(
+            dataset,
+            batch_size=32,
+            shuffle=True,
+            drop_last=False
+        )
+
+        Ainsi tu ne jettes pas les dernières données.
+
+    6. Nombre de tokens par epoch
+
+        Chaque epoch voit :
+
+        2 009 × 256
+
+        soit :
+
+        514 304 tokens
+
+        Le batch_size ne change pas cette quantité.
+
+        Il change seulement combien de tokens sont traités simultanément.
+
+        batch_size = 16
+        → 4 096 tokens / step
+
+        batch_size = 32
+        → 8 192 tokens / step
+
+        batch_size = 64
+        → 16 384 tokens / step
+
+
+    7. Comparaison
+
+        Configuration	Tokens / step	Steps / epoch	Attention
+        16 × 256	4 096	~126	faible
+        32 × 256	8 192	~63	raisonnable
+        64 × 256	16 384	~32	plus de mémoire
+        32 × 512	16 384	~63*	~4× coût attention
+
+        * Si les données étaient également organisées en séquences de 512 tokens.
+
+        Pour ton premier entraînement, je partirais donc sur :
+
+        batch_size: 32
+
+        et :
+
+        max_seq_len: 256
+
+    8. Un détail important : max_seq_len ≠ forcément sequence_length
+
+        Dans ton architecture, tu as :
+
+        max_seq_len: 256
+
+        Cela signifie que ton modèle accepte au maximum 256 tokens.
+
+        Ton Dataset peut donc produire :
+
+        [256 tokens]
+
+        et le modèle fonctionne avec cette longueur.
+
+        Dans notre configuration actuelle, on peut simplement avoir :
+
+        sequence_length = max_seq_len = 256
+
+        Mais conceptuellement :
+
+        max_seq_len
+            │
+            └── capacité maximale du Transformer
+
+        sequence_length
+            │
+            └── longueur réellement utilisée par le Dataset
+
+        Pour l'étape 8, je recommande de les garder identiques.
+
+    9. Configuration finale recommandée
+
+        Dans model.yaml :
+
+        vocab_size: 16000
+
+        d_model: 256
+        num_heads: 8
+        num_layers: 4
+        d_ff: 1024
+
+        max_seq_len: 256
+
+        dropout: 0.1
+
+        Dans training.yaml :
+
+        batch_size: 32
+
+    Donc :
+
+                ÉTAPE 8
+
+        Sequence length
+                256
+                │
+                ▼
+        ┌──────────────┐
+        │ Transformer  │
+        │ d_model=256  │
+        └──────┬───────┘
+                │
+                │
+        ┌───────┴────────┐
+        │                │
+    Seq 1            Seq 32
+    256 tok          256 tok
+        │                │
+        └───────┬────────┘
+                ▼
+            8 192 tokens
+            / step
+                │
+                ▼
+            GPU CUDA
+
+---------------------------------------------------------------------------------------------
+
+5-configuration CUDA/Colab
+
+PC local
+│
+├── Code du projet
+├── tokenizer/
+├── data/
+├── configs/
+└── GitHub
+       │
+       │ git clone
+       ▼
+Google Colab
+│
+├── Python
+├── PyTorch
+├── CUDA
+├── GPU NVIDIA
+│
+├── train.jsonl
+├── validation.jsonl
+└── scripts/train.py
+       │
+       ▼
+Student v1
+       │
+       ▼
+checkpoints/student_v1/
+
+    1-notebook/training_colab.ipynb
+        1. Création du notebook
+
+            Le fichier a été créé dans le projet :
+
+            llm/
+            └── notebooks/
+                └── training_colab.ipynb
+
+            Le notebook contient actuellement 9 cellules.
+
+            Nous avons vérifié sa validité avec :
+
+            poetry run python -c "import json; json.load(open('notebooks/training_colab.ipynb')); print('Notebook valide')"
+
+            Résultat :
+
+            Notebook valide
+
+            Puis :
+
+            poetry run python -c "import json; n=json.load(open('notebooks/training_colab.ipynb')); print('Nombre de cellules :', len(n['cells']))"
+
+            Résultat :
+
+            Nombre de cellules : 9
+
+        2. Les 9 cellules prévues
+
+            Nous avons défini cette structure :
+
+            training_colab.ipynb
+            │
+            ├── Cellule 1 → Vérification de l'environnement Colab
+            ├── Cellule 2 → Vérification CUDA / GPU
+            ├── Cellule 3 → Définition du device
+            ├── Cellule 4 → Nettoyage mémoire CUDA
+            ├── Cellule 5 → Clonage du projet GitHub
+            ├── Cellule 6 → Entrée dans le projet
+            ├── Cellule 7 → Vérification de la structure du projet
+            ├── Cellule 8 → Installation de Poetry + dépendances
+            └── Cellule 9 → Test PyTorch + CUDA
+
+            Nous avons décidé de ne pas modifier ces cellules pour l'instant.
+
+        3. Session Colab
+
+            Tu as créé une session distante :
+
+            colab new --gpu L4 --session trainer
+
+            La session existe bien et nous avons vérifié :
+
+            colab sessions
+
+            Résultat :
+
+            [trainer] ... | Hardware: L4 | Shape: Standard | Variant: GPU
+
+            Puis :
+
+            colab status
+
+            Résultat :
+
+            [trainer] ... | Hardware: L4 | Status: IDLE
+
+            Donc nous utilisons :
+
+            Session : trainer
+            GPU     : NVIDIA L4
+        4. Upload du notebook
+
+            Nous avons envoyé le notebook local vers la session Colab :
+
+            colab upload notebooks/training_colab.ipynb /content/training_colab.ipynb --session trainer
+
+            Résultat :
+
+            Uploaded 'notebooks/training_colab.ipynb' to '/content/training_colab.ipynb'
+
+            Puis vérifié :
+
+            colab ls --session trainer
+
+            Résultat :
+
+            .config/
+            sample_data/
+            training_colab.ipynb
+
+            Donc le notebook est bien présent dans le runtime Colab.
+
+            5. Test réel de CUDA
+
+            Comme colab exec nécessite du code en entrée ou --file, nous avons effectué un test directement sur la session trainer avec :
+
+            echo 'import torch; print("PyTorch :", torch.__version__); print("CUDA disponible :", torch.cuda.is_available()); print("GPU :", torch.cuda.get_device_name(0) if torch.cuda.is_available() else "Aucun"); print("CUDA :", torch.version.cuda)' | colab exec --session trainer
+
+            Résultat :
+
+            PyTorch : 2.11.0+cu128
+            CUDA disponible : True
+            GPU : NVIDIA L4
+            CUDA : 12.8
+
+        5.Lancement des 9 cellules:
+
+        1. Création de la session Colab GPU
+
+            On a créé une session avec une NVIDIA L4 :
+
+            colab new --gpu L4 --session trainer
+
+            Puis on a vérifié :
+
+            colab status
+
+            Résultat :
+
+            [trainer] ... | Hardware: L4 | Variant: GPU | Status: IDLE
+
+        2. Upload du notebook
+
+            Depuis ton PC :
+
+            colab upload notebooks/training_colab.ipynb /content/training_colab.ipynb --session trainer
+
+            Puis :
+
+            colab ls --session trainer
+
+            On a vérifié que :
+
+            training_colab.ipynb
+
+            était bien présent dans Colab.
+
+            Exécution des 9 cellules
+
+            Le principe utilisé est :
+
+            PC Ubuntu
+            │
+            │ colab exec
+            ▼
+            Session Colab "trainer"
+            │
+            └── Kernel Python
+
+            Comme colab exec exécute du Python, les commandes Jupyter comme !git, !pip et %cd ont été reproduites avec Python/subprocess lorsque nécessaire.
+                        
+-----------------------------------------------------------------------------------------------------
+
+6- préparation des données
+
+    a-src/llm/data/dataset.py
+        Ce fichier sera responsable de charger les séquences tokenisées.
+
+        Rendre le dataset compatible avec un fichier JSONL contenant :
+
+        {"input_ids": [12, 45, 78, ...]}
+
+        Chaque séquence de 256 tokens devient :
+
+        input_ids
+            │
+            ├───────────────┐
+            ▼               ▼
+        inputs           targets
+        tokens[0:255]     tokens[1:256]
+
+        Donc le modèle apprend :
+
+        token 1 → token 2
+        token 2 → token 3
+        token 3 → token 4
+        ...
+
+    b-src/llm/data/dataloader.py
+        Ce fichier construit les DataLoader.
+
+    c-src/llm/training/trainer.py
+        Ici se trouve la vraie logique d'entraînement.
+
+        Le Trainer va gérer :
+
+            boucle epochs ;
+            forward ;
+            loss ;
+            backward ;
+            gradient clipping ;
+            optimizer ;
+            scheduler ;
+            validation ;
+            sauvegarde des checkpoints ;
+            déplacement CPU/GPU.
+
+    d- scripts/train.py
+        point d'entrée : il charge les configs, construit le modèle, les DataLoaders, AdamW, le scheduler cosine, puis lance Trainer.
+        Il respecte tes paramètres actuels : 4 couches, d_model=256, vocabulaire 16 000, séquence 256, batch 32, 3 epochs
