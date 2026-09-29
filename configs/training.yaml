@@ -1,0 +1,57 @@
+# configs/training.yaml
+
+# =========================
+# Entraînement
+# =========================
+
+batch_size: 32
+epochs: 3
+
+# =========================
+# Optimisation
+# =========================
+
+optimizer: "AdamW"
+
+learning_rate: 0.0003
+weight_decay: 0.01
+
+# =========================
+# Learning Rate Scheduler
+# =========================
+
+scheduler: "cosine"
+
+warmup_steps: 20
+
+# =========================
+# Stabilisation
+# =========================
+
+gradient_clip: 1.0
+
+# =========================
+# Validation
+# =========================
+
+eval_every: 20
+
+# =========================
+# Checkpoints
+# =========================
+
+save_every: 50
+
+checkpoint_dir: "checkpoints/student_v1"
+
+# =========================
+# Hardware
+# =========================
+
+device: "cuda"
+
+# =========================
+# Reproductibilité
+# =========================
+
+seed: 42
