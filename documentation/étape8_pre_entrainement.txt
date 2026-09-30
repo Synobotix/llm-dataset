@@ -15,20 +15,20 @@ Paramètre du student
 
 | Paramètre                 |                    Valeur décidée |
 | ------------------------- | --------------------------------: |
-| `vocab_size`              |                        **16 000** |
-| `d_model` / embedding dim |                           **256** |
-| `num_heads`               |                             **8** |
-| `head_dim`                |                            **32** |
-| `num_layers`              |                             **4** |
-| `d_ff`                    |                         **1 024** |
-| `max_seq_len`             |                           **256** |
-| Position encoding         | **learned positional embeddings** |
-| Normalisation             |                        **Pre-LN** |
-| Attention                 |         **causal self-attention** |
-| FFN                       |                          **GELU** |
-| FFN architecture          |              **256 → 1024 → 256** |
-| Final normalization       |                     **LayerNorm** |
-| LM Head                   |                  **256 → 16 000** |
+| vocab_size                |                          16 000   |
+| d_model / embedding dim   |                             256   |
+| num_heads                 |                               8   |
+| head_dim                  |                              32   |
+| num_layers                |                               4   |
+| d_ff                      |                           1 024   |
+| max_seq_len               |                             256   |
+| Position encoding         |   learned positional embeddings   |
+| Normalisation             |                          Pre-LN   |
+| Attention                 |           causal self-attention   |
+| FFN                       |                            GELU   |
+| FFN architecture          |                256 → 1024 → 256   |
+| Final normalization       |                       LayerNorm   |
+| LM Head                   |                    256 → 16 000   |
 
 
 
@@ -1019,3 +1019,18 @@ checkpoints/student_v1/
     d- scripts/train.py
         point d'entrée : il charge les configs, construit le modèle, les DataLoaders, AdamW, le scheduler cosine, puis lance Trainer.
         Il respecte tes paramètres actuels : 4 couches, d_model=256, vocabulaire 16 000, séquence 256, batch 32, 3 epochs
+
+----------------------------------------------------------------------------------------------------------------------------
+7-checkpoint:
+
+============================================================ CHECKPOINT STUDENT V1 ============================================================ 
+
+student_v1_final.pt : 130.91 MB 
+checkpoint_step_50.pt : 130.91 MB 
+checkpoint_step_100.pt : 130.91 MB 
+checkpoint_step_150.pt : 130.91 MB 
+Chargement : student_v1_final.pt 
+Type : <class 'dict'> 
+Clés : ['global_step', 'model_state_dict', 'optimizer_state_dict', 'scheduler_state_dict'] 
+Global step : 189 
+CHECKPOINT STUDENT V1 : OK

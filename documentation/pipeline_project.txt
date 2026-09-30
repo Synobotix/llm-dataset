@@ -5,7 +5,22 @@ llm/
 ├── README.md
 ├── .gitignore
 ├── .env
-│
+│   automation/
+|   ├── __init__.py
+|   │
+|   ├── colab.py                    ← orchestrateur
+|   │
+|   ├── clone_repository.py         ← 1
+|   ├── install_poetry.py           ← 2
+|   ├── configure_cuda.py           ← 3
+|   ├── regenerate_lock.py          ← 4
+|   ├── install_dependencies.py     ← 5
+|   ├── verify_environment.py       ← 6
+|   ├── verify_dataset.py           ← 7
+|   ├── train_student_v1.py         ← 8
+|   └── verify_checkpoint.py  
+|
+|
 ├── data/
 │   │
 │   ├── raw/
