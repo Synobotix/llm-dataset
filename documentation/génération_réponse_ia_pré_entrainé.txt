@@ -1,0 +1,50 @@
+1- src/llm/tokenizer/tokenizer.py
+
+Le rôle de tokenizer.py est de faire le pont entre le texte humain et les nombres que Student v1 peut comprendre.
+
+Dans notre pipeline :
+
+Texte → Tokenizer → IDs numériques → Student v1 → IDs numériques → Tokenizer → Texte
+
+
+2-scripts/inference.py
+
+Si tokenizer.py est responsable de transformer texte ↔ nombres, inference.py est responsable de faire fonctionner Student v1 en mode utilisation.
+
+1. Vue globale
+Utilisateur
+    │
+    │ "Bonjour, comment vas-tu ?"
+    ▼
+scripts/inference.py
+    │
+    ├── charge la configuration du modèle
+    ├── charge le checkpoint Student v1
+    ├── charge tokenizer.py
+    │
+    ▼
+tokenizer.encode()
+    │
+    ▼
+IDs numériques
+    │
+    ▼
+Student v1
+    │
+    ▼
+logits
+    │
+    ▼
+choix du prochain token
+    │
+    ▼
+plusieurs tokens générés
+    │
+    ▼
+tokenizer.decode()
+    │
+    ▼
+Réponse texte
+    │
+    ▼
+Utilisateur
