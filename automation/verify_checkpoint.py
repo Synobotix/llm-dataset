@@ -50,6 +50,7 @@ def verify_checkpoint() -> None:
     checkpoint = torch.load(
         FINAL_CHECKPOINT,
         map_location="cpu",
+        weights_only=False,
     )
 
     print("Type :", type(checkpoint))
