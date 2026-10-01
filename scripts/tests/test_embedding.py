@@ -1,57 +1,62 @@
 import torch
 
+from llm.data.dataloader import create_train_dataloader
 from llm.model.embedding import TokenEmbedding
+
+
+VOCAB_SIZE = 1000
+EMBEDDING_DIM = 120
 
 
 def main():
     print("=" * 60)
-    print("TEST TOKEN EMBEDDING")
+    print("TEST DE L'EMBEDDING")
     print("=" * 60)
 
-    # Configuration du test
-    vocab_size = 16000
-    embedding_dim = 256
-    batch_size = 2
-    sequence_length = 256
+    train_loader = create_train_dataloader()
 
-    # Création du modèle
+    batch = next(iter(train_loader))
+
+    input_ids = batch["input_ids"]
+
+    print("\nInput IDs :")
+    print(input_ids.shape)
+
     embedding = TokenEmbedding(
-        vocab_size=vocab_size,
-        embedding_dim=embedding_dim
+        vocab_size=VOCAB_SIZE,
+        embedding_dim=EMBEDDING_DIM,
     )
 
-    # Création de faux input IDs
-    input_ids = torch.randint(
-        0,
-        vocab_size,
-        (batch_size, sequence_length)
+    embeddings = embedding(input_ids)
+
+    print("\nEmbeddings :")
+    print(embeddings.shape)
+
+    print("\nType :")
+    print(embeddings.dtype)
+
+    print("\nExemple :")
+    print("\nToken ID :", input_ids[0, 0].item())
+
+    print("\nVecteur correspondant :")
+    print(embeddings[0, 0])
+
+    print("\n--- VÉRIFICATION ---")
+
+    assert input_ids.shape == (2, 128)
+
+    assert embeddings.shape == (
+        2,
+        128,
+        EMBEDDING_DIM,
     )
 
-    # Passage dans l'embedding
-    output = embedding(input_ids)
+    assert embeddings.dtype == torch.float32
 
-    # Affichage
-    print()
-    print("Configuration :")
-    print(f"Vocabulaire        : {vocab_size}")
-    print(f"Embedding dimension: {embedding_dim}")
-    print(f"Batch size         : {batch_size}")
-    print(f"Sequence length    : {sequence_length}")
-
-    print()
-    print("Shapes :")
-    print(f"Input  : {input_ids.shape}")
-    print(f"Output : {output.shape}")
-
-    # Vérifications
-    assert input_ids.shape == (2, 256)
-    assert output.shape == (2, 256, 256)
-
-    print()
-    print("✓ Input shape correcte")
-    print("✓ Output shape correcte")
-    print()
-    print("TEST RÉUSSI")
+    print("✓ Input IDs correctement reçus")
+    print("✓ Embedding fonctionne")
+    print("✓ Shape [batch, sequence, embedding] correcte")
+    print("✓ Les IDs sont transformés en vecteurs")
 
 
 if __name__ == "__main__":

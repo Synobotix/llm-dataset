@@ -1,0 +1,738 @@
+Modèle d'entraînement from scratch : GPT
+
+paramètre:
+
+epoch = 3
+vocab_size = 994
+d_model = 120
+num_heads = 3
+d_ff = 480
+max_seq_len = 128
+dropout = 0.1
+device = cpu
+batch_size = 2
+
+
+llm/
+│
+├── pyproject.toml
+├── poetry.lock
+├── README.md
+├── .gitignore
+├── .env
+│
+├── automation/
+│   ├── __init__.py
+│   ├── colab.py
+│   ├── clone_repository.py
+│   ├── install_poetry.py
+│   ├── configure_cuda.py
+│   ├── regenerate_lock.py
+│   ├── install_dependencies.py
+│   ├── verify_environment.py
+│   ├── verify_dataset.py
+│   ├── train_student_v1.py
+│   └── verify_checkpoint.py
+│
+├── data/
+│   ├── raw/
+│   │   ├── c4_1000.jsonl
+│   │   └── .gitkeep
+│   │
+│   ├── processed/
+│   │   ├── c4_clean.jsonl
+│   │   ├── train.jsonl
+│   │   └── validation.jsonl
+│   │
+│   └── distilled/
+│       └── distilled.jsonl
+│
+├── tokenizer/
+│   ├── train_tokenizer.py
+│   ├── tokenizer.json
+│   ├── vocab.json
+│   └── config.json
+│
+├── scripts/
+│   ├── tests/
+│   ├── prepare_c4.py
+│   ├── clean_c4.py
+│   ├── split_dataset.py
+│   ├── generate_distillation.py
+│   ├── tokenize_dataset.py
+│   ├── train.py
+│   ├── evaluate.py
+│   └── inference.py
+│
+├── src/
+│   └── llm/
+│       ├── __init__.py
+│       │
+│       ├── data/
+│       │   ├── __init__.py
+│       │   ├── cleaning.py
+│       │   ├── filtering.py
+│       │   ├── deduplication.py
+│       │   ├── dataset.py
+│       │   └── dataloader.py
+│       │
+│       ├── tokenizer/
+│       │   ├── __init__.py
+│       │   ├── tokenizer.py
+│       │   └── vocabulary.py
+│       │
+│       ├── model/
+│       │   ├── __init__.py
+│       │   ├── embedding.py
+│       │   ├── positional_encoding.py
+│       │   ├── attention.py
+│       │   ├── feed_forward.py
+│       │   ├── transformer_block.py
+│       │   └── transformer.py
+│       │
+│       ├── training/
+│       │   ├── __init__.py
+│       │   ├── loss.py
+│       │   ├── optimizer.py
+│       │   ├── scheduler.py
+│       │   ├── trainer.py
+│       │   └── checkpoint.py
+│       │
+│       ├── distillation/
+│       │   ├── __init__.py
+│       │   ├── openrouter.py
+│       │   ├── teachers.py
+│       │   ├── prompts.py
+│       │   ├── validator.py
+│       │   └── storage.py
+│       │
+│       ├── evaluation/
+│       │   ├── __init__.py
+│       │   ├── metrics.py
+│       │   └── evaluate.py
+│       │
+│       └── inference/
+│           ├── __init__.py
+│           └── generate.py
+│
+├── configs/
+│   ├── model.yaml
+│   ├── training.yaml
+│   └── tokenizer.yaml
+│
+├── checkpoints/
+│   ├── student_v1/
+│   └── student_v2/
+│
+├── logs/
+│   └── .gitkeep
+│
+└── notebooks/
+    ├── exploration.ipynb
+    └── training_colab.ipynb
+
+
+2. Le pipeline global
+
+Ton projet suit maintenant cette architecture :
+
+                    ┌─────────────────┐
+                    │   C4 RAW        │
+                    │ c4_1000.jsonl   │
+                    └────────┬────────┘
+                             │
+                             ▼
+                    ┌─────────────────┐
+                    │ Nettoyage       │
+                    │ Filtrage        │
+                    │ Déduplication   │
+                    └────────┬────────┘
+                             │
+                             ▼
+                    ┌─────────────────┐
+                    │ C4 CLEAN        │
+                    │ 913 documents   │
+                    └────────┬────────┘
+                             │
+                             ▼
+                 ┌────────────────────────┐
+                 │ Séparation dataset     │
+                 │ train / validation     │
+                 └───────────┬────────────┘
+                             │
+                             ▼
+                    ┌─────────────────┐
+                    │ Tokenizer BPE   │
+                    │ ByteLevel       │
+                    └────────┬────────┘
+                             │
+                             ▼
+                  ┌──────────────────────┐
+                  │ Tokenisation         │
+                  │ séquences de 128    │
+                  │ input / labels       │
+                  └──────────┬───────────┘
+                             │
+                             ▼
+                 ┌─────────────────────────┐
+                 │ Transformer causal      │
+                 │ Student from scratch    │
+                 └────────────┬────────────┘
+                              │
+                              ▼
+                    ┌─────────────────┐
+                    │ Entraînement    │
+                    │ PyTorch         │
+                    │ AdamW           │
+                    │ Scheduler       │
+                    └────────┬────────┘
+                             │
+                             ▼
+                    ┌─────────────────┐
+                    │ Student v1      │
+                    │ checkpoint      │
+                    └────────┬────────┘
+                             │
+                  ┌──────────┴──────────┐
+                  ▼                     ▼
+          ┌──────────────┐      ┌──────────────┐
+          │ Evaluation   │      │ Inference    │
+          │ Loss / PPL   │      │ Génération   │
+          └──────────────┘      └──────────────┘
+
+---------------------------------------------------------------------------------------------------
+
+code pour le nettoyage : scripts/clean_c4.py ; scripts/prepare_c4.py , scripts/prepare_c4.py
+3. Étape 1 — Récupération du C4
+
+Nous avons commencé avec :
+
+data/raw/c4_1000.jsonl
+
+Le dataset contient les documents bruts récupérés depuis C4.
+
+L'objectif était d'avoir une petite quantité de données pour pouvoir tester tout le pipeline localement.
+
+
+4. Étape 2 — Nettoyage
+
+Nous avons développé le pipeline :
+
+cleaning.py
+filtering.py
+deduplication.py
+
+Le dataset initial a été nettoyé.
+
+Résultat actuel :
+
+C4 brut
+   ↓
+nettoyage
+   ↓
+filtrage
+   ↓
+déduplication
+   ↓
+c4_clean.jsonl
+
+Nous avons finalement obtenu :
+
+913 documents
+
+avec environ :
+
+2 771 145 caractères
+449 395 mots
+
+
+
+-----------------------------------------------------------------------------------
+5. Étape 3 — Split train / validation
+
+Code: scripts/split_dataset.py
+
+Pour le premier test nous avons volontairement utilisé seulement :
+
+5 documents
+
+avec :
+
+80 % train
+20 % validation
+
+Résultat :
+
+Train      : 4 documents
+Validation : 1 document
+
+C'était volontaire : l'objectif était de tester toute la chaîne avant de passer à un dataset plus grand.
+
+
+---------------------------------------------------------------------------------------------------
+6. Étape 4 — Tokenizer
+
+code: tokenizer/train_tokenizer.py
+Nous avons créé notre propre tokenizer :
+
+BPE
++
+ByteLevel
+
+Configuration :
+
+vocab cible : 16 000
+min_frequency : 2
+special tokens :
+    <pad>
+    <unk>
+    <bos>
+    <eos>
+
+Mais avec seulement 5 documents, le vocabulaire réellement appris est :
+
+994 tokens
+
+Donc :
+
+vocab_size = 994
+------------------------------------------------------------------------------------------------
+7. Étape 5 — Tokenisation
+
+Code: src/llm/tokenizer/tokenizer.py
+
+Les textes sont transformés en IDs :
+
+texte
+ ↓
+tokenizer
+ ↓
+[123, 54, 87, 21, ...]
+
+Nous avons choisi :
+
+BLOCK_SIZE = 128
+
+Pour le causal language modeling :
+
+input:
+
+[t1, t2, t3, t4, ..., t128]
+
+labels:
+
+[t2, t3, t4, t5, ..., t129]
+
+Donc le modèle apprend :
+
+t1 → t2
+t2 → t3
+t3 → t4
+...
+
+Résultat actuel :
+
+Train      : 21 séquences
+Validation : 13 séquences
+8. Étape 6 — DataLoader
+
+Nous avons ensuite créé les DataLoaders.
+
+Configuration :
+
+batch_size = 2
+
+Donc pour le train :
+
+21 séquences
+↓
+batch size = 2
+↓
+11 batches / epoch
+
+Avec :
+
+3 epochs
+
+on obtient :
+
+11 × 3 = 33 steps
+
+C'est exactement ce que nous avons vérifié avec :
+
+global_step = 33
+
+-------------------------------------------------------------------------------------------
+9. Étape 7 — Transformer causal
+
+Code: src/llm/model/embedding.py; src/llm/model/positional_encoding.py ; src/llm/model/transformer.py ; src/llm/model/transformer_block.py
+
+
+Notre Student possède actuellement :
+
+Vocab              = 994
+Embedding          = 120
+Attention heads    = 3
+Head dimension     = 40
+FFN hidden         = 480
+Transformer layers = 4
+Sequence length    = 128
+
+Architecture :
+
+Input IDs
+    │
+    ▼
+Token Embedding
+    │
+    ▼
+Positional Encoding
+    │
+    ▼
+Transformer Block 1
+    │
+    ▼
+Transformer Block 2
+    │
+    ▼
+Transformer Block 3
+    │
+    ▼
+Transformer Block 4
+    │
+    ▼
+LayerNorm
+    │
+    ▼
+Linear
+    │
+    ▼
+994 logits
+
+Nombre total de paramètres :
+
+937 234
+
+----------------------------------------------------------------------------------------------
+10. Étape 8 — Self-Attention causale
+
+Code: src/llm/model/attention.py
+
+Chaque Transformer Block possède :
+
+LayerNorm
+    ↓
+Self-Attention
+    ↓
+Residual
+    ↓
+LayerNorm
+    ↓
+Feed Forward
+    ↓
+Residual
+
+L'attention possède :
+
+Q = Query
+K = Key
+V = Value
+
+avec :
+
+3 heads
+×
+40 dimensions
+=
+120 dimensions
+
+Et nous avons utilisé un causal mask.
+
+Donc le token actuel ne peut pas regarder les tokens futurs.
+
+Exemple :
+
+t1 → peut voir t1
+
+t2 → peut voir t1 t2
+
+t3 → peut voir t1 t2 t3
+
+t4 → peut voir t1 t2 t3 t4
+
+C'est ce qui rend le modèle adapté à une architecture GPT-like.
+
+-----------------------------------------------------------------------------------------
+11. Étape 9 — Feed Forward
+
+Code: src/llm/model/feed_forward.py
+
+Chaque Transformer Block possède également :
+
+120
+ ↓
+480
+ ↓
+GELU
+ ↓
+120
+
+Donc :
+
+Embedding dimension = 120
+FFN hidden         = 480
+
+------------------------------------------------------------------------------------------
+12. Étape 10 — Loss
+
+Code: src/llm/training/loss.py
+
+Nous avons implémenté :
+
+CrossEntropyLoss
+
+Le modèle produit :
+
+[batch, sequence, vocab]
+
+donc :
+
+[2, 128, 994]
+
+et nous comparons cela avec :
+
+[2, 128]
+
+Les logits sont aplatis pour calculer la Cross Entropy sur tous les tokens.
+
+------------------------------------------------------------------------------------
+13. Étape 11 — Optimizer
+
+Code: src/llm/training/Optimizer.py
+
+
+Nous avons choisi :
+
+AdamW
+
+avec :
+
+learning_rate = 0.0003
+weight_decay  = 0.01
+
+------------------------------------------------------------------------------------
+14. Étape 12 — Scheduler
+
+Code: src/llm/training/Scheduler.py
+
+Nous avons utilisé :
+
+CosineAnnealingLR
+
+avec :
+
+33 steps
+
+Le learning rate évolue ainsi :
+
+0.00030000
+     ↓
+0.00029934
+     ↓
+...
+     ↓
+0.00001000
+
+Donc il diminue progressivement pendant les 3 epochs.
+
+------------------------------------------------------------------------------------------
+
+15. Étape 13 — Entraînement Student v1
+
+Code : src/llm/training/train.py ; scripts/train.py
+
+Nous avons entraîné :
+
+Student from scratch
+
+pendant :
+
+3 epochs
+
+Résultats :
+
+Epoch 1
+Train Loss       = 6.8639
+Validation Loss  = 6.7367
+
+Epoch 2
+Train Loss       = 6.5088
+Validation Loss  = 6.6121
+
+Epoch 3
+Train Loss       = 6.3873
+Validation Loss  = 6.5838
+
+On voit donc :
+
+Train Loss
+
+6.86
+ ↓
+6.50
+ ↓
+6.38
+
+et :
+
+Validation Loss
+
+6.73
+ ↓
+6.61
+ ↓
+6.58
+
+--------------------------------------------------------------------------------------------
+16. Étape 14 — Checkpoint
+
+Nous avons créé :
+
+src/llm/training/checkpoint.py
+
+Le checkpoint contient :
+
+global_step
+model_state_dict
+optimizer_state_dict
+scheduler_state_dict
+
+Le checkpoint final :
+
+checkpoints/student_v1/student_v1_final.pt
+
+Il contient donc notamment les poids appris du Student.
+
+---------------------------------------------------------------------------------------
+
+
+17. Étape 15 — Évaluation
+
+Nous avons ensuite créé :
+
+scripts/evaluate.py
+
+Le script recharge :
+
+student_v1_final.pt
+
+puis utilise uniquement :
+
+validation.jsonl
+
+Résultat :
+
+Validation Loss : 6.5838
+Perplexité      : 723.2756
+
+La perplexité est calculée avec :
+
+PPL = exp(Loss)
+
+donc :
+
+exp(6.5838)
+≈
+723.2756
+
+----------------------------------------------------------------------------------------------
+18. Étape 16 — Inférence
+
+Nous avons également créé :
+
+src/llm/inference/generate.py
+scripts/inference.py
+
+La chaîne est :
+
+"Je m'appelle Mamy"
+          ↓
+       tokenizer
+          ↓
+      input_ids
+          ↓
+       Student
+          ↓
+        logits
+          ↓
+   argmax / greedy
+          ↓
+    prochain token
+          ↓
+       nouveau
+          ↓
+       token
+          ↓
+       ...
+          ↓
+    texte généré
+
+Pour l'instant nous utilisons un greedy decoding.
+
+------------------------------------------------------------------------------------------------
+19. Où nous sommes actuellement
+
+Ton projet est actuellement ici :
+
+C4
+ │
+ ▼
+Nettoyage
+ │
+ ▼
+913 documents propres
+ │
+ ▼
+5 documents pour le test
+ │
+ ├──────────────┐
+ ▼              ▼
+Train         Validation
+4 docs        1 doc
+ │              │
+ ▼              │
+Tokenisation    │
+ │              │
+ ▼              │
+21 séquences    13 séquences
+ │              │
+ ▼              │
+Student v1      │
+ │              │
+ ▼              │
+3 epochs        │
+ │              │
+ ▼              │
+Checkpoint      │
+ │              │
+ └──────┬───────┘
+        │
+        ▼
+   Evaluation
+        │
+        ▼
+Loss = 6.5838
+PPL  = 723.2756
+        │
+        ▼
+    Inference
+
+--------------------------------------------------------------------------------------
+20. Ce qu'il reste à faire
+
+A ce moment, la réponse du prompt est encore très mauvaise
+
+la réponse est "de de de de de de de de de"
+
+
+Pour que l'entraînement marche, il fallait modifier un paramètre la suite dans /documentation/entrainement_5documents_avec_résultat.txt

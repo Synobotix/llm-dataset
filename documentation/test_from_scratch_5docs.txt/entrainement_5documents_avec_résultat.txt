@@ -1,0 +1,355 @@
+Comme le prompt généré étais très mauvais, il fallait changer le code, mais le changement de code n'était pas la solution.
+On mets on place une stratégie d'entraînement progressive
+
+--------------------------------------------------------------------------
+paramètres :
+
+epoch = 3
+vocab_size = 994
+d_model = 120
+num_heads = 3
+d_ff = 480
+max_seq_len = 128
+dropout = 0.1
+device = cpu
+batch_size = 2
+
+NB: epoch, est le nombre de répétition d'entraînement fait pas le modèle GPT
+
+---------------------------------------------------------------------------
+
+Modification de code:
+scripts/train.py
+    -augmenter epoch à 20 
+
+résultat: le loss se situe entre 6 et 5
+
+----------------------------------------------------------------------------
+
+prompt:
+scripts/inference.py
+    -modification du prompts
+
+réponse: il y a maintenant un changement
+
+Checkpoint créé dans checkpoint: checkpoints/student_v1/student_v1_5docs.pt
+
+------------------------------------------------------------------------------------------
+------------------------------------------------------------------------------------------
+
+Pour diminuer la loss, il faut que le modèle devienne meilleur pour prédire le prochain token.
+Une fois le checkpoint mis en place, on peut continuer l'entraînement avec 5 + 20 documents:
+
+epoch = 20
+vocab_size = 994
+d_model = 120
+num_heads = 3
+d_ff = 480
+max_seq_len = 128
+dropout = 0.1
+device = cpu
+batch_size = 2
+
+Changer le minimum de document dans scripts/split_dataset.py:
+        TOTAL_DOCUMENTS = 25
+
+        # 80 % entraînement / 20 % validation
+        VALIDATION_RATIO = 0.2
+
+        # Reproductibilité
+        SEED = 42
+
+
+Entraîner le tokenizer sur 20 documents dans tokenizer/train_tokenizer.py, ajoute :
+        MAX_DOCUMENTS = 20
+
+
+Créé un nouvel checkpoint dans scripts/train.py qui aura le checkpoint d'entraînement:
+        VOCAB_SIZE = 994
+
+        D_MODEL = 120
+        NUM_HEADS = 3
+        NUM_LAYERS = 2
+        FFN_HIDDEN_DIM = 480
+
+        MAX_SEQ_LEN = 128
+
+        EPOCHS = 20
+
+        LEARNING_RATE = 1e-4
+        WEIGHT_DECAY = 0.01
+
+        DEVICE = "cpu"
+
+        SEED = 42
+
+        GRADIENT_CLIP = 1.0
+        SAVE_EVERY = 50
+
+
+        # ============================================================
+        # CHECKPOINT
+        # ============================================================
+
+        CHECKPOINT_TO_LOAD = (
+            "checkpoints/student_v1/student_v1_5docs.pt"
+        )
+
+        CHECKPOINT_TO_SAVE = (
+            "student_v1_25docs.pt"
+        )
+
+Résultat: 
+    Validation Loss = 4.9010
+
+-----------------------------------------------------------------------------------------
+-----------------------------------------------------------------------------------------
+
+Maintenant, on peut transporter le checkpoint pour l'entraîné dans un serveur dédié
+
+Pour pouvoir reprendre student_v1_100docs.pt sur n'importe quel serveur compatible PyTorch, il faut conserver à la fois le checkpoint, l'architecture exacte, le tokenizer et les paramètres d'entraînement.
+
+1. Le plus important : le checkpoint
+
+À conserver :
+
+checkpoints/
+└── student_v1/
+    └── student_v1_100docs.pt
+
+Ton checkpoint contient déjà :
+
+model_state_dict
+optimizer_state_dict
+scheduler_state_dict
+global_step
+
+Donc il contient l'état nécessaire pour continuer l'entraînement, pas seulement les poids du modèle.
+
+2. Le code du modèle
+
+Il faut conserver le code qui définit exactement ton Transformer :
+
+src/llm/model/
+└── transformer.py
+
+Et toutes les classes/fonctions utilisées par Transformer.
+
+Ton architecture actuelle doit rester exactement :
+
+VOCAB_SIZE          = 994
+EMBEDDING_DIM       = 120
+NUM_HEADS           = 3
+FFN_HIDDEN_DIM      = 480
+NUM_LAYERS          = 2
+MAX_SEQUENCE_LENGTH = 128
+
+Par exemple, si tu modifies :
+
+EMBEDDING_DIM = 256
+
+tu ne pourras pas charger directement le checkpoint actuel, car les dimensions des poids ne correspondront plus.
+
+3. Le tokenizer
+
+Très important :
+
+tokenizer/
+└── tokenizer.json
+
+Il faut conserver exactement le tokenizer qui a produit les 994 tokens.
+
+Donc :
+
+tokenizer.get_vocab_size()
+
+doit toujours donner :
+
+994
+
+Il ne faut pas entraîner un nouveau tokenizer pour continuer ce modèle.
+
+Le modèle a appris des poids associés aux IDs de tokens. Si le token 123 signifie autre chose sur le nouveau serveur, le modèle ne fonctionnera plus correctement.
+
+4. Le code du Dataset
+
+Pour continuer l'entraînement, il faut également conserver le code qui transforme les données en :
+
+input_ids
+labels
+
+Notamment :
+
+src/llm/data/
+src/llm/tokenizer/
+
+et les scripts correspondants.
+
+Le format actuel est :
+
+{
+  "input_ids": [...],
+  "labels": [...]
+}
+
+avec des séquences de longueur maximale :
+
+128
+5. Le code du Trainer
+
+Il faut conserver :
+
+src/llm/training/
+├── trainer.py
+├── checkpoint.py
+└── ...
+
+Parce que ton Trainer sait comment :
+
+charger le modèle
+       ↓
+charger optimizer
+       ↓
+charger scheduler
+       ↓
+restaurer global_step
+       ↓
+continuer forward
+       ↓
+loss
+       ↓
+backward
+       ↓
+gradient clipping
+       ↓
+optimizer.step()
+       ↓
+scheduler.step()
+6. Les paramètres d'entraînement
+
+Je te conseille de conserver un fichier de configuration avec tous les paramètres.
+
+Actuellement :
+
+VOCAB_SIZE = 994
+
+D_MODEL = 120
+NUM_HEADS = 3
+NUM_LAYERS = 2
+FFN_HIDDEN_DIM = 480
+MAX_SEQ_LEN = 128
+
+BATCH_SIZE = 2
+
+LEARNING_RATE = 1e-4
+WEIGHT_DECAY = 0.01
+
+GRADIENT_CLIP = 1.0
+
+EPOCHS = 20
+
+SEED = 42
+
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+
+Et ton scheduler :
+
+CosineAnnealingLR
+
+avec ses paramètres exacts.
+
+Important : les paramètres du scheduler doivent également être conservés si tu veux reproduire exactement la trajectoire d'apprentissage.
+
+7. Les données
+
+Si tu veux continuer réellement l'entraînement, il faut évidemment avoir accès aux données suivantes :
+
+data/
+├── raw/
+├── processed/
+└── tokenized/
+    ├── train.jsonl
+    └── validation.jsonl
+
+Pour ton état actuel :
+
+train      → 80 documents
+validation → 20 documents
+
+et :
+
+train      → 971 séquences
+validation → 162 séquences
+
+Si tu veux continuer avec de nouvelles données, tu peux également conserver le pipeline de préparation pour produire des données compatibles.
+
+8. Les dépendances Python
+
+Il faut conserver :
+
+pyproject.toml
+poetry.lock
+
+C'est particulièrement important dans ton cas puisque tu utilises Poetry.
+
+Sur le nouveau serveur :
+
+poetry install
+
+permettra d'installer les mêmes dépendances.
+
+9. La version de Python/PyTorch
+
+Pour une reprise fiable, conserve également les versions.
+
+Actuellement tu avais notamment :
+
+Python : 3.10.12
+PyTorch : 2.14.0+cpu
+
+Sur un serveur GPU, PyTorch pourra être une variante CUDA compatible, mais il faut éviter de changer arbitrairement les versions.
+
+Structure que je te conseille de conserver
+
+Ton projet complet devrait rester quelque chose comme :
+
+llm/
+│
+├── pyproject.toml
+├── poetry.lock
+│
+├── tokenizer/
+│   └── tokenizer.json
+│
+├── data/
+│   ├── raw/
+│   ├── processed/
+│   └── tokenized/
+│       ├── train.jsonl
+│       └── validation.jsonl
+│
+├── src/
+│   └── llm/
+│       ├── model/
+│       │   └── transformer.py
+│       │
+│       ├── data/
+│       │   └── ...
+│       │
+│       ├── tokenizer/
+│       │   └── tokenizer.py
+│       │
+│       └── training/
+│           ├── trainer.py
+│           ├── checkpoint.py
+│           └── ...
+│
+├── scripts/
+│   ├── train.py
+│   ├── inference.py
+│   └── ...
+│
+└── checkpoints/
+    └── student_v1/
+        └── student_v1_100docs.pt
+

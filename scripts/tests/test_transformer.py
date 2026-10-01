@@ -1,93 +1,107 @@
 import torch
 
+from llm.data.dataloader import create_train_dataloader
+from llm.tokenizer.tokenizer import get_vocab_size
 from llm.model.transformer import CausalTransformer
+
+
+EMBEDDING_DIM = 120
+NUM_HEADS = 3
+FFN_HIDDEN_DIM = 480
+NUM_LAYERS = 4
+MAX_SEQUENCE_LENGTH = 128
 
 
 def main():
     print("=" * 60)
-    print("TEST TRANSFORMER CAUSAL COMPLET")
+    print("TEST DU TRANSFORMER CAUSAL COMPLET")
     print("=" * 60)
 
-    # Configuration
-    vocab_size = 16000
-    embedding_dim = 256
-    num_heads = 8
-    num_layers = 4
-    ff_hidden_dim = 1024
-    max_sequence_length = 256
+    # Taille réelle du vocabulaire
+    vocab_size = get_vocab_size()
 
-    batch_size = 2
-    sequence_length = 256
+    print("\nTaille réelle du vocabulaire :")
+    print(vocab_size)
 
-    # Création du modèle
+    # Dataset
+    train_loader = create_train_dataloader()
+
+    batch = next(iter(train_loader))
+
+    input_ids = batch["input_ids"]
+
+    print("\nInput IDs :")
+    print(input_ids.shape)
+
+    # Modèle
     model = CausalTransformer(
         vocab_size=vocab_size,
-        embedding_dim=embedding_dim,
-        num_heads=num_heads,
-        num_layers=num_layers,
-        ff_hidden_dim=ff_hidden_dim,
-        max_sequence_length=max_sequence_length
-    )
-
-    # Entrée simulée
-    input_ids = torch.randint(
-        low=0,
-        high=vocab_size,
-        size=(batch_size, sequence_length)
+        embedding_dim=EMBEDDING_DIM,
+        num_heads=NUM_HEADS,
+        ffn_hidden_dim=FFN_HIDDEN_DIM,
+        num_layers=NUM_LAYERS,
+        max_sequence_length=MAX_SEQUENCE_LENGTH,
     )
 
     # Forward pass
     logits = model(input_ids)
 
-    print()
-    print("Configuration :")
+    print("\nLogits :")
+    print(logits.shape)
+
+    print("\n--- CONFIGURATION ---")
     print(f"Vocabulaire        : {vocab_size}")
-    print(f"Embedding dimension: {embedding_dim}")
-    print(f"Nombre de heads    : {num_heads}")
-    print(f"Nombre de blocks   : {num_layers}")
-    print(f"FFN dimension      : {ff_hidden_dim}")
-    print(f"Context length     : {max_sequence_length}")
+    print(f"Embedding dimension: {EMBEDDING_DIM}")
+    print(f"Nombre de heads    : {NUM_HEADS}")
+    print(f"Head dimension     : {EMBEDDING_DIM // NUM_HEADS}")
+    print(f"FFN hidden         : {FFN_HIDDEN_DIM}")
+    print(f"Nombre de layers   : {NUM_LAYERS}")
+    print(f"Sequence length    : {MAX_SEQUENCE_LENGTH}")
 
-    print()
-    print("Shapes :")
-    print(f"Input IDs : {input_ids.shape}")
-    print(f"Logits    : {logits.shape}")
+    print("\n--- PARAMÈTRES DU MODÈLE ---")
 
-    # Vérification des dimensions
+    total_parameters = sum(
+        parameter.numel()
+        for parameter in model.parameters()
+    )
+
+    trainable_parameters = sum(
+        parameter.numel()
+        for parameter in model.parameters()
+        if parameter.requires_grad
+    )
+
+    print(f"Paramètres totaux      : {total_parameters:,}")
+    print(f"Paramètres entraînables: {trainable_parameters:,}")
+
+    print("\n--- VÉRIFICATION ---")
+
     assert input_ids.shape == (
-        batch_size,
-        sequence_length
+        2,
+        MAX_SEQUENCE_LENGTH,
     )
 
     assert logits.shape == (
-        batch_size,
-        sequence_length,
-        vocab_size
+        2,
+        MAX_SEQUENCE_LENGTH,
+        vocab_size,
     )
 
-    # Vérification du nombre de blocs
-    assert len(model.blocks) == 4
+    assert model.vocab_size == vocab_size
+    assert model.embedding_dim == EMBEDDING_DIM
+    assert model.num_heads == NUM_HEADS
+    assert model.num_layers == NUM_LAYERS
 
-    # Vérification des paramètres principaux
-    assert model.token_embedding.embedding.num_embeddings == 16000
-    assert model.token_embedding.embedding.embedding_dim == 256
+    assert len(model.transformer_blocks) == NUM_LAYERS
 
-    assert model.blocks[0].attention.num_heads == 8
-    assert model.blocks[0].attention.head_dim == 32
-
-    print()
-    print("✓ Input shape correcte")
-    print("✓ Token Embedding correcte")
-    print("✓ Position Embedding correcte")
-    print("✓ 4 Transformer Blocks présents")
-    print("✓ 8 heads par block")
-    print("✓ Dimension par head : 32")
-    print("✓ Final LayerNorm présente")
-    print("✓ LM Head 256 → 16000 correcte")
-    print("✓ Output logits correcte")
-
-    print()
-    print("TEST RÉUSSI")
+    print("✓ Vocabulaire réel correctement chargé")
+    print("✓ Token Embedding fonctionne")
+    print("✓ Positional Encoding fonctionne")
+    print("✓ 4 Transformer Blocks fonctionnent")
+    print("✓ Final LayerNorm fonctionne")
+    print("✓ Projection vers le vocabulaire fonctionne")
+    print("✓ Shape des logits correcte")
+    print("✓ Modèle Transformer causal fonctionnel")
 
 
 if __name__ == "__main__":

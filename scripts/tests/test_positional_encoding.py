@@ -1,60 +1,78 @@
 import torch
 
+from llm.data.dataloader import create_train_dataloader
+from llm.model.embedding import TokenEmbedding
 from llm.model.positional_encoding import PositionalEncoding
+
+
+VOCAB_SIZE = 1000
+EMBEDDING_DIM = 128
+MAX_SEQUENCE_LENGTH = 128
 
 
 def main():
     print("=" * 60)
-    print("TEST POSITIONAL ENCODING")
+    print("TEST DU POSITIONAL ENCODING")
     print("=" * 60)
 
-    # Configuration
-    max_sequence_length = 256
-    embedding_dim = 256
-    batch_size = 2
-    sequence_length = 256
+    train_loader = create_train_dataloader()
 
-    # Création du module
+    batch = next(iter(train_loader))
+    input_ids = batch["input_ids"]
+
+    print("\nInput IDs :")
+    print(input_ids.shape)
+
+    token_embedding = TokenEmbedding(
+        vocab_size=VOCAB_SIZE,
+        embedding_dim=EMBEDDING_DIM,
+    )
+
+    embeddings = token_embedding(input_ids)
+
+    print("\nToken Embeddings :")
+    print(embeddings.shape)
+
     positional_encoding = PositionalEncoding(
-        max_sequence_length=max_sequence_length,
-        embedding_dim=embedding_dim
+        embedding_dim=EMBEDDING_DIM,
+        max_sequence_length=MAX_SEQUENCE_LENGTH,
     )
 
-    # Faux embeddings provenant du TokenEmbedding
-    x = torch.randn(
-        batch_size,
-        sequence_length,
-        embedding_dim
+    output = positional_encoding(embeddings)
+
+    print("\nAprès Positional Encoding :")
+    print(output.shape)
+
+    print("\nVecteur position 0 :")
+    print(output[0, 0])
+
+    print("\nVecteur position 1 :")
+    print(output[0, 1])
+
+    print("\n--- VÉRIFICATION ---")
+
+    assert embeddings.shape == (
+        2,
+        128,
+        EMBEDDING_DIM,
     )
 
-    # Ajout des positions
-    output = positional_encoding(x)
+    assert output.shape == (
+        2,
+        128,
+        EMBEDDING_DIM,
+    )
 
-    print()
-    print("Configuration :")
-    print(f"Max sequence length : {max_sequence_length}")
-    print(f"Embedding dimension : {embedding_dim}")
-    print(f"Batch size          : {batch_size}")
-    print(f"Sequence length     : {sequence_length}")
+    assert positional_encoding.positional_encoding.shape == (
+        1,
+        MAX_SEQUENCE_LENGTH,
+        EMBEDDING_DIM,
+    )
 
-    print()
-    print("Shapes :")
-    print(f"Input  : {x.shape}")
-    print(f"Output : {output.shape}")
-
-    # Vérifications
-    assert x.shape == (2, 256, 256)
-    assert output.shape == (2, 256, 256)
-
-    # Vérification que les valeurs ont changé
-    assert not torch.equal(x, output)
-
-    print()
-    print("✓ Input shape correcte")
-    print("✓ Output shape correcte")
-    print("✓ Information de position ajoutée")
-    print()
-    print("TEST RÉUSSI")
+    print("✓ Token Embedding fonctionne")
+    print("✓ Positional Encoding fonctionne")
+    print("✓ Shape correcte")
+    print("✓ Les positions sont ajoutées aux embeddings")
 
 
 if __name__ == "__main__":

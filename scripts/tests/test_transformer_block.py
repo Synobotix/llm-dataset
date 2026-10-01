@@ -1,74 +1,122 @@
 import torch
 
+from llm.tokenizer.tokenizer import get_vocab_size
+from llm.data.dataloader import create_train_dataloader
+from llm.model.embedding import TokenEmbedding
+from llm.model.positional_encoding import PositionalEncoding
 from llm.model.transformer_block import TransformerBlock
+
+
+EMBEDDING_DIM = 120
+NUM_HEADS = 3
+FFN_HIDDEN_DIM = 480
+MAX_SEQUENCE_LENGTH = 128
 
 
 def main():
     print("=" * 60)
-    print("TEST TRANSFORMER BLOCK")
+    print("TEST DU TRANSFORMER BLOCK")
     print("=" * 60)
 
-    # Configuration
-    embedding_dim = 256
-    num_heads = 8
-    hidden_dim = 1024
-    max_sequence_length = 256
+    train_loader = create_train_dataloader()
 
-    batch_size = 2
-    sequence_length = 256
+    batch = next(iter(train_loader))
 
-    # Création du Transformer Block
-    block = TransformerBlock(
-        embedding_dim=embedding_dim,
-        num_heads=num_heads,
-        hidden_dim=hidden_dim,
-        max_sequence_length=max_sequence_length
+    input_ids = batch["input_ids"]
+
+    print("\nInput IDs :")
+    print(input_ids.shape)
+
+    # 1. Token Embedding
+    token_embedding = TokenEmbedding(
+        vocab_size=get_vocab_size(),
+        embedding_dim=EMBEDDING_DIM,
     )
 
-    # Entrée simulée
-    x = torch.randn(
-        batch_size,
-        sequence_length,
-        embedding_dim
+    embeddings = token_embedding(input_ids)
+
+    print("\nToken Embeddings :")
+    print(embeddings.shape)
+
+    # 2. Positional Encoding
+    positional_encoding = PositionalEncoding(
+        embedding_dim=EMBEDDING_DIM,
+        max_sequence_length=MAX_SEQUENCE_LENGTH,
     )
 
-    # Passage dans le bloc
-    output = block(x)
+    x = positional_encoding(embeddings)
 
-    print()
-    print("Configuration :")
-    print(f"Embedding dimension : {embedding_dim}")
-    print(f"Nombre de heads     : {num_heads}")
-    print(f"Dimension par head  : {embedding_dim // num_heads}")
-    print(f"Hidden dimension    : {hidden_dim}")
-    print(f"Sequence length     : {sequence_length}")
-    print(f"Batch size          : {batch_size}")
+    print("\nAprès Positional Encoding :")
+    print(x.shape)
 
-    print()
-    print("Shapes :")
-    print(f"Input  : {x.shape}")
-    print(f"Output : {output.shape}")
+    # 3. Transformer Block
+    transformer_block = TransformerBlock(
+        embedding_dim=EMBEDDING_DIM,
+        num_heads=NUM_HEADS,
+        ffn_hidden_dim=FFN_HIDDEN_DIM,
+        max_sequence_length=MAX_SEQUENCE_LENGTH,
+    )
 
-    # Vérifications
-    assert x.shape == (2, 256, 256)
-    assert output.shape == (2, 256, 256)
+    output = transformer_block(x)
 
-    # Vérification des composants
-    assert block.attention_norm.normalized_shape == (256,)
-    assert block.feed_forward_norm.normalized_shape == (256,)
-    assert block.attention.num_heads == 8
-    assert block.attention.head_dim == 32
+    print("\nAprès Transformer Block :")
+    print(output.shape)
 
-    print()
-    print("✓ Input shape correcte")
-    print("✓ Output shape correcte")
-    print("✓ LayerNorm attention correcte")
-    print("✓ Causal Self-Attention correcte")
-    print("✓ LayerNorm Feed Forward correcte")
-    print("✓ Feed Forward correcte")
-    print("✓ Connexions résiduelles présentes")
-    print()
-    print("TEST RÉUSSI")
+    print("\n--- CONFIGURATION ---")
+    print(f"Embedding dimension : {EMBEDDING_DIM}")
+    print(f"Nombre de heads     : {NUM_HEADS}")
+    print(f"Head dimension      : {EMBEDDING_DIM // NUM_HEADS}")
+    print(f"FFN hidden dimension: {FFN_HIDDEN_DIM}")
+    print(f"Sequence length     : {MAX_SEQUENCE_LENGTH}")
+
+    print("\n--- VÉRIFICATION ---")
+
+    assert input_ids.shape == (2, 128)
+    assert embeddings.shape == (
+        2,
+        128,
+        EMBEDDING_DIM,
+    )
+
+    assert x.shape == (
+        2,
+        128,
+        EMBEDDING_DIM,
+    )
+
+    assert output.shape == (
+        2,
+        128,
+        EMBEDDING_DIM,
+    )
+
+    assert transformer_block.attention.num_heads == NUM_HEADS
+
+    assert transformer_block.attention.head_dim == (
+        EMBEDDING_DIM // NUM_HEADS
+    )
+
+    assert isinstance(
+        transformer_block.layer_norm_1,
+        torch.nn.LayerNorm,
+    )
+
+    assert isinstance(
+        transformer_block.layer_norm_2,
+        torch.nn.LayerNorm,
+    )
+
+    print("✓ Input IDs correctement reçus")
+    print("✓ Token Embedding fonctionne")
+    print("✓ Positional Encoding fonctionne")
+    print("✓ LayerNorm 1 fonctionne")
+    print("✓ Multi-Head Attention fonctionne")
+    print("✓ Connexion résiduelle 1 fonctionne")
+    print("✓ LayerNorm 2 fonctionne")
+    print("✓ Feed Forward fonctionne")
+    print("✓ Connexion résiduelle 2 fonctionne")
+    print("✓ Transformer Block fonctionne")
+    print("✓ Shape finale correcte")
 
 
 if __name__ == "__main__":

@@ -1,173 +1,317 @@
-
 from pathlib import Path
 
 import torch
-import yaml
 
-from llm.model.transformer import CausalTransformer
-from llm.tokenizer.tokenizer import LLMTokenizer
+from llm.model.transformer import Transformer
+from llm.tokenizer.tokenizer import load_tokenizer
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+# ============================================================
+# CONFIGURATION
+# ============================================================
 
-MODEL_CONFIG_PATH = PROJECT_ROOT / "configs/model.yaml"
-TOKENIZER_PATH = PROJECT_ROOT / "tokenizer/tokenizer.json"
-CHECKPOINT_PATH = (
-    PROJECT_ROOT
-    / "checkpoints/student_v1/student_v1_final.pt"
+VOCAB_SIZE = 994
+
+EMBEDDING_DIM = 120
+NUM_HEADS = 3
+FFN_HIDDEN_DIM = 480
+NUM_LAYERS = 2
+MAX_SEQUENCE_LENGTH = 128
+
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+
+CHECKPOINT_PATH = Path(
+    "checkpoints/student_v1/student_v1_100docs.pt"
 )
 
+MAX_NEW_TOKENS = 50
 
-def load_model(device: torch.device) -> CausalTransformer:
-    with open(MODEL_CONFIG_PATH, "r", encoding="utf-8") as file:
-        config = yaml.safe_load(file)
 
-    model = CausalTransformer(
-        vocab_size=config["vocab_size"],
-        embedding_dim=config["d_model"],
-        num_heads=config["num_heads"],
-        num_layers=config["num_layers"],
-        ff_hidden_dim=config["d_ff"],
-        max_sequence_length=config["max_seq_len"],
+# ============================================================
+# PROMPTS
+# ============================================================
+
+TRAIN_PROMPTS = [
+    "Planche à neige",
+    "La Fed a relevé les taux",
+    "Choux de Bruxelles",
+    "Bridjet vêtements grande taille",
+    "nouvelle augmentation de capital de 40M€",
+    "Randonnée depuis la Baraque Michel",
+    "1961",
+]
+
+RANDOM_PROMPTS = [
+    "Le soleil se couche",
+]
+
+
+# ============================================================
+# CHARGEMENT DU MODÈLE
+# ============================================================
+
+def load_model():
+
+    print("=" * 60)
+    print("CHARGEMENT DU STUDENT V1")
+    print("=" * 60)
+
+    print(f"Checkpoint : {CHECKPOINT_PATH}")
+    print(f"Device     : {DEVICE}")
+
+    if not CHECKPOINT_PATH.exists():
+
+        raise FileNotFoundError(
+            f"Checkpoint introuvable : {CHECKPOINT_PATH}"
+        )
+
+    # --------------------------------------------------------
+    # Création du modèle
+    # --------------------------------------------------------
+
+    model = Transformer(
+        vocab_size=VOCAB_SIZE,
+        embedding_dim=EMBEDDING_DIM,
+        num_heads=NUM_HEADS,
+        ffn_hidden_dim=FFN_HIDDEN_DIM,
+        num_layers=NUM_LAYERS,
+        max_sequence_length=MAX_SEQUENCE_LENGTH,
     )
+
+    # --------------------------------------------------------
+    # Chargement du checkpoint
+    # --------------------------------------------------------
 
     checkpoint = torch.load(
         CHECKPOINT_PATH,
-        map_location=device,
-        weights_only=False,
+        map_location=DEVICE,
     )
 
     model.load_state_dict(
         checkpoint["model_state_dict"]
     )
 
-    model.to(device)
+    model.to(DEVICE)
+
     model.eval()
+
+    print("Modèle chargé.")
+
+    if "global_step" in checkpoint:
+
+        print(
+            f"Global step : "
+            f"{checkpoint['global_step']}"
+        )
+
+    print()
 
     return model
 
 
+# ============================================================
+# GÉNÉRATION
+# ============================================================
+
 @torch.no_grad()
-def generate_text(
-    model: CausalTransformer,
-    tokenizer: LLMTokenizer,
-    prompt: str,
-    device: torch.device,
-    max_new_tokens: int = 50,
-) -> str:
+def generate(
+    model,
+    tokenizer,
+    prompt,
+    max_new_tokens=50,
+):
 
-    token_ids = tokenizer.encode(prompt)
+    # --------------------------------------------------------
+    # Tokenisation du prompt
+    # --------------------------------------------------------
 
-    if not token_ids:
-        return ""
+    encoding = tokenizer.encode(prompt)
 
-    max_sequence_length = model.max_sequence_length
+    input_ids = encoding.ids
 
-    generated_ids = token_ids.copy()
+    if len(input_ids) == 0:
+
+        raise ValueError(
+            "Le prompt ne contient aucun token."
+        )
+
+    input_ids = torch.tensor(
+        [input_ids],
+        dtype=torch.long,
+        device=DEVICE,
+    )
+
+    # --------------------------------------------------------
+    # Génération autoregressive
+    # --------------------------------------------------------
 
     for _ in range(max_new_tokens):
 
-        context_ids = generated_ids[-max_sequence_length:]
+        # Garder uniquement les 128 derniers tokens
+        context = input_ids[
+            :, -MAX_SEQUENCE_LENGTH:
+        ]
 
-        input_ids = torch.tensor(
-            [context_ids],
-            dtype=torch.long,
-            device=device,
-        )
+        # ----------------------------------------------------
+        # Forward du Transformer
+        # ----------------------------------------------------
 
-        logits = model(input_ids)
+        logits = model(context)
+
+        # ----------------------------------------------------
+        # Logits du dernier token
+        # ----------------------------------------------------
 
         next_token_logits = logits[:, -1, :]
 
-        next_token_id = torch.argmax(
+        # ----------------------------------------------------
+        # Greedy decoding
+        # ----------------------------------------------------
+
+        next_token = torch.argmax(
             next_token_logits,
             dim=-1,
-        ).item()
+            keepdim=True,
+        )
 
-        generated_ids.append(next_token_id)
+        # ----------------------------------------------------
+        # Ajouter le nouveau token
+        # ----------------------------------------------------
 
-    new_token_ids = generated_ids[len(token_ids):]
+        input_ids = torch.cat(
+            [
+                input_ids,
+                next_token,
+            ],
+            dim=1,
+        )
+
+    # --------------------------------------------------------
+    # Décodage final
+    # --------------------------------------------------------
+
+    generated_ids = input_ids[0].tolist()
 
     generated_text = tokenizer.decode(
-        new_token_ids
+        generated_ids
     )
 
     return generated_text
 
 
-def main() -> None:
-    print("=" * 60)
-    print("INFERENCE STUDENT V1")
-    print("=" * 60)
+# ============================================================
+# TEST DES PROMPTS
+# ============================================================
 
-    if not CHECKPOINT_PATH.exists():
-        raise FileNotFoundError(
-            f"Checkpoint introuvable : {CHECKPOINT_PATH}"
-        )
-
-    if not TOKENIZER_PATH.exists():
-        raise FileNotFoundError(
-            f"Tokenizer introuvable : {TOKENIZER_PATH}"
-        )
-
-    device = torch.device(
-        "cuda" if torch.cuda.is_available() else "cpu"
-    )
-
-    print(f"Device : {device}")
-
-    if device.type == "cuda":
-        print(
-            f"GPU : {torch.cuda.get_device_name(0)}"
-        )
-
-    print()
-    print("Chargement du tokenizer...")
-
-    tokenizer = LLMTokenizer(
-        TOKENIZER_PATH
-    )
-
-    print(
-        f"Vocabulaire : {tokenizer.vocab_size}"
-    )
-
-    print()
-    print("Chargement de Student v1...")
-
-    model = load_model(device)
-
-    print("Student v1 : OK")
+def test_prompts(
+    model,
+    tokenizer,
+    prompts,
+    category,
+):
 
     print()
     print("=" * 60)
-    print("DIALOGUE")
+    print(category)
     print("=" * 60)
-    print("Tape 'exit' pour quitter.")
-    print()
 
-    while True:
+    for index, prompt in enumerate(
+        prompts,
+        start=1,
+    ):
 
-        prompt = input("Vous : ").strip()
+        print()
+        print("-" * 60)
+        print(f"TEST {index}")
+        print("-" * 60)
 
-        if prompt.lower() == "exit":
-            break
+        print()
+        print("Prompt :")
+        print(prompt)
 
-        if not prompt:
-            continue
+        print()
+        print("Génération :")
 
-        response = generate_text(
+        generated_text = generate(
             model=model,
             tokenizer=tokenizer,
             prompt=prompt,
-            device=device,
-            max_new_tokens=50,
+            max_new_tokens=MAX_NEW_TOKENS,
         )
 
-        print()
-        print(f"Student v1 : {response}")
+        print(generated_text)
+
         print()
 
+
+# ============================================================
+# MAIN
+# ============================================================
+
+def main():
+
+    print()
+    print("=" * 60)
+    print("TEST DE GÉNÉRATION - STUDENT V1")
+    print("=" * 60)
+    print()
+
+    # --------------------------------------------------------
+    # Tokenizer
+    # --------------------------------------------------------
+
+    print("Chargement du tokenizer...")
+
+    tokenizer = load_tokenizer()
+
+    print(
+        f"Vocabulaire : "
+        f"{tokenizer.get_vocab_size()}"
+    )
+
+    print()
+
+    # --------------------------------------------------------
+    # Modèle
+    # --------------------------------------------------------
+
+    model = load_model()
+
+    # --------------------------------------------------------
+    # Prompts provenant des données
+    # --------------------------------------------------------
+
+    test_prompts(
+        model=model,
+        tokenizer=tokenizer,
+        prompts=TRAIN_PROMPTS,
+        category="PROMPTS ISSUS DES DOCUMENTS D'ENTRAÎNEMENT",
+    )
+
+    # --------------------------------------------------------
+    # Prompts jamais vus
+    # --------------------------------------------------------
+
+    test_prompts(
+        model=model,
+        tokenizer=tokenizer,
+        prompts=RANDOM_PROMPTS,
+        category="PROMPTS NOUVEAUX / NON PRÉSENTS DANS LES DONNÉES",
+    )
+
+    # --------------------------------------------------------
+    # Fin
+    # --------------------------------------------------------
+
+    print()
+    print("=" * 60)
+    print("TEST TERMINÉ")
+    print("=" * 60)
+
+
+# ============================================================
+# POINT D'ENTRÉE
+# ============================================================
 
 if __name__ == "__main__":
     main()

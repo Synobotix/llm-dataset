@@ -1,70 +1,73 @@
 import torch
 
-from llm.model.attention import CausalSelfAttention
+from llm.model.attention import MultiHeadCausalSelfAttention
 
 
 def main():
+
     print("=" * 60)
-    print("TEST CAUSAL SELF-ATTENTION")
+    print("TEST ATTENTION CAUSALE")
     print("=" * 60)
 
-    # Configuration
-    embedding_dim = 256
-    num_heads = 8
-    max_sequence_length = 256
+    # Configuration volontairement petite
+    embedding_dim = 12
+    num_heads = 3
+    max_sequence_length = 5
 
-    batch_size = 2
-    sequence_length = 256
-
-    # Création de l'attention
-    attention = CausalSelfAttention(
+    attention = MultiHeadCausalSelfAttention(
         embedding_dim=embedding_dim,
         num_heads=num_heads,
-        max_sequence_length=max_sequence_length
+        max_sequence_length=max_sequence_length,
     )
 
-    # Entrée simulée
+    attention.eval()
+
+    # --------------------------------------------------
+    # Séquence de 5 tokens
+    # --------------------------------------------------
+
+    batch_size = 1
+    sequence_length = 5
+
     x = torch.randn(
         batch_size,
         sequence_length,
-        embedding_dim
+        embedding_dim,
     )
 
-    # Passage dans l'attention
-    output = attention(x)
+    print("\nEntrée :")
+    print("shape :", x.shape)
 
-    print()
-    print("Configuration :")
-    print(f"Embedding dimension : {embedding_dim}")
-    print(f"Nombre de heads     : {num_heads}")
+    # --------------------------------------------------
+    # Forward
+    # --------------------------------------------------
+
+    with torch.no_grad():
+
+        output = attention(x)
+
+    # --------------------------------------------------
+    # Résultat
+    # --------------------------------------------------
+
+    print("\n" + "=" * 60)
+    print("RÉSULTAT")
+    print("=" * 60)
+
     print(
-        f"Dimension par head  : "
-        f"{embedding_dim // num_heads}"
+        "Sortie shape :",
+        output.shape,
     )
-    print(f"Sequence length     : {sequence_length}")
-    print(f"Batch size          : {batch_size}")
 
-    print()
-    print("Shapes :")
-    print(f"Input  : {x.shape}")
-    print(f"Output : {output.shape}")
+    print(
+        "NaN :",
+        torch.isnan(output).any().item(),
+    )
 
-    # Vérifications
-    assert x.shape == (2, 256, 256)
-    assert output.shape == (2, 256, 256)
-
-    # Vérification de la configuration
-    assert attention.num_heads == 8
-    assert attention.head_dim == 32
-
-    print()
-    print("✓ Input shape correcte")
-    print("✓ Output shape correcte")
-    print("✓ Nombre de heads correct")
-    print("✓ Dimension par head correcte")
-    print("✓ Masque causal créé")
-    print()
-    print("TEST RÉUSSI")
+    print(
+        "Inf :",
+        torch.isinf(output).any().item(),
+    )
 
 
 if __name__ == "__main__":

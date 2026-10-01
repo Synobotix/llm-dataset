@@ -1,193 +1,299 @@
 
 import torch
 
-from llm.data.dataloader import create_train_dataloader
+from llm.data.dataloader import (
+    create_train_dataloader,
+    create_validation_dataloader,
+)
+
+from llm.tokenizer.tokenizer import get_vocab_size
+
 from llm.model.transformer import CausalTransformer
+
+from llm.training.optimizer import create_optimizer
+
+from llm.training.scheduler import create_scheduler
+
+from llm.training.trainer import Trainer
+
+
+EMBEDDING_DIM = 120
+NUM_HEADS = 3
+FFN_HIDDEN_DIM = 480
+NUM_LAYERS = 4
+MAX_SEQUENCE_LENGTH = 128
+
+LEARNING_RATE = 0.0003
+WEIGHT_DECAY = 0.01
+
+EPOCHS = 3
 
 
 def main():
 
     print("=" * 60)
-    print("TEST TRAINER - UN BATCH")
+    print("TEST COMPLET DU TRAINER")
     print("=" * 60)
 
-    # ========================================================
-    # Configuration
-    # ========================================================
+    # --------------------------------------------------
+    # Dataset
+    # --------------------------------------------------
 
-    device = torch.device(
-        "cuda" if torch.cuda.is_available() else "cpu"
+    train_dataloader = create_train_dataloader()
+
+    validation_dataloader = (
+        create_validation_dataloader()
     )
 
-    batch_size = 32
+    print("\nDataset :")
 
-    print(f"Device : {device}")
-
-    if torch.cuda.is_available():
-        print(
-            f"GPU    : "
-            f"{torch.cuda.get_device_name(0)}"
-        )
-
-    # ========================================================
-    # DataLoader
-    # ========================================================
-
-    dataloader = create_train_dataloader(
-        dataset_path="data/processed/train_tokens.jsonl",
-        batch_size=batch_size,
-        num_workers=0,
+    print(
+        f"Train      : "
+        f"{len(train_dataloader.dataset)} séquences"
     )
 
-    batch = next(iter(dataloader))
+    print(
+        f"Validation : "
+        f"{len(validation_dataloader.dataset)} séquences"
+    )
 
-    input_ids = batch["input_ids"].to(device)
-    labels = batch["labels"].to(device)
+    # --------------------------------------------------
+    # Vocabulaire
+    # --------------------------------------------------
 
-    print()
-    print("Batch :")
-    print(f"  input_ids : {input_ids.shape}")
-    print(f"  labels    : {labels.shape}")
-    print(f"  dtype     : {input_ids.dtype}")
+    vocab_size = get_vocab_size()
 
-    # ========================================================
+    print(
+        f"\nVocabulary size : {vocab_size}"
+    )
+
+    # --------------------------------------------------
     # Modèle
-    # ========================================================
+    # --------------------------------------------------
 
     model = CausalTransformer(
-        vocab_size=16000,
-        embedding_dim=256,
-        num_heads=8,
-        num_layers=4,
-        ff_hidden_dim=1024,
-        max_sequence_length=256,
+        vocab_size=vocab_size,
+        embedding_dim=EMBEDDING_DIM,
+        num_heads=NUM_HEADS,
+        ffn_hidden_dim=FFN_HIDDEN_DIM,
+        num_layers=NUM_LAYERS,
+        max_sequence_length=MAX_SEQUENCE_LENGTH,
     )
 
-    model.to(device)
-
-    print()
-    print("Modèle chargé.")
-
-    # ========================================================
+    # --------------------------------------------------
     # Optimizer
-    # ========================================================
+    # --------------------------------------------------
 
-    optimizer = torch.optim.AdamW(
-        model.parameters(),
-        lr=0.0003,
-        weight_decay=0.01,
+    optimizer = create_optimizer(
+        model=model,
+        learning_rate=LEARNING_RATE,
+        weight_decay=WEIGHT_DECAY,
     )
 
-    # ========================================================
-    # Forward
-    # ========================================================
+    # --------------------------------------------------
+    # Scheduler
+    # --------------------------------------------------
 
-    model.train()
-
-    optimizer.zero_grad(
-        set_to_none=True
+    steps_per_epoch = len(
+        train_dataloader
     )
 
-    print()
-    print("Forward...")
+    total_steps = (
+        steps_per_epoch * EPOCHS
+    )
 
-    logits = model(input_ids)
+    scheduler = create_scheduler(
+        optimizer=optimizer,
+        total_steps=total_steps,
+    )
+
+    print("\nScheduler :")
 
     print(
-        f"Logits : {logits.shape}"
-    )
-
-    # ========================================================
-    # Loss
-    # ========================================================
-
-    batch_size_actual = logits.size(0)
-    sequence_length = logits.size(1)
-    vocab_size = logits.size(2)
-
-    logits_flat = logits.reshape(
-        batch_size_actual * sequence_length,
-        vocab_size
-    )
-
-    labels_flat = labels.reshape(
-        batch_size_actual * sequence_length
-    )
-
-    loss = torch.nn.functional.cross_entropy(
-        logits_flat,
-        labels_flat
+        f"Steps per epoch : "
+        f"{steps_per_epoch}"
     )
 
     print(
-        f"Loss initiale : {loss.item():.4f}"
-    )
-
-    # ========================================================
-    # Backward
-    # ========================================================
-
-    print()
-    print("Backward...")
-
-    loss.backward()
-
-    # ========================================================
-    # Vérification des gradients
-    # ========================================================
-
-    total_gradient = 0.0
-    gradient_count = 0
-
-    for parameter in model.parameters():
-
-        if parameter.grad is not None:
-
-            total_gradient += (
-                parameter.grad.detach()
-                .abs()
-                .mean()
-                .item()
-            )
-
-            gradient_count += 1
-
-    print(
-        f"Paramètres avec gradient : "
-        f"{gradient_count}"
+        f"Total steps     : "
+        f"{total_steps}"
     )
 
     print(
-        f"Moyenne des gradients : "
-        f"{total_gradient / max(gradient_count, 1):.8f}"
+        f"Learning rate initial : "
+        f"{optimizer.param_groups[0]['lr']:.8f}"
     )
 
-    # ========================================================
-    # Gradient clipping
-    # ========================================================
+    # --------------------------------------------------
+    # Trainer
+    # --------------------------------------------------
 
-    gradient_norm = torch.nn.utils.clip_grad_norm_(
-        model.parameters(),
-        max_norm=1.0
+    trainer = Trainer(
+        model=model,
+        train_dataloader=train_dataloader,
+        validation_dataloader=validation_dataloader,
+        optimizer=optimizer,
+        scheduler=scheduler,
+        device="cpu",
+        epochs=EPOCHS,
+        gradient_clip=1.0,
+        eval_every=5,
+        save_every=10,
+        checkpoint_dir="checkpoints/student_v1",
     )
 
-    print(
-        f"Gradient norm avant clipping : "
-        f"{gradient_norm.item():.4f}"
-    )
+    # --------------------------------------------------
+    # Entraînement
+    # --------------------------------------------------
 
-    # ========================================================
-    # Optimizer step
-    # ========================================================
+    trainer.train()
 
-    print()
-    print("Optimizer step...")
+    # --------------------------------------------------
+    # Vérification du global step
+    # --------------------------------------------------
 
-    optimizer.step()
-
-    print()
+    print("\n" + "=" * 60)
+    print("VÉRIFICATIONS")
     print("=" * 60)
-    print("TEST RÉUSSI")
+
+    print(
+        f"\nGlobal step : "
+        f"{trainer.global_step}"
+    )
+
+    expected_steps = (
+        steps_per_epoch * EPOCHS
+    )
+
+    assert (
+        trainer.global_step
+        == expected_steps
+    )
+
+    print(
+        "✓ Toutes les étapes "
+        "d'entraînement ont été exécutées"
+    )
+
+    # --------------------------------------------------
+    # Vérification du learning rate
+    # --------------------------------------------------
+
+    final_learning_rate = (
+        optimizer.param_groups[0]["lr"]
+    )
+
+    print(
+        f"\nLearning rate final : "
+        f"{final_learning_rate:.8f}"
+    )
+
+    assert (
+        final_learning_rate
+        <= LEARNING_RATE
+    )
+
+    print(
+        "✓ Scheduler fonctionnel"
+    )
+
+    # --------------------------------------------------
+    # Vérification du checkpoint final
+    # --------------------------------------------------
+
+    checkpoint_path = (
+        trainer.checkpoint_dir
+        / "student_v1_final.pt"
+    )
+
+    print(
+        f"\nCheckpoint : "
+        f"{checkpoint_path}"
+    )
+
+    assert checkpoint_path.exists()
+
+    print(
+        "✓ Checkpoint final créé"
+    )
+
+    # --------------------------------------------------
+    # Chargement du checkpoint
+    # --------------------------------------------------
+
+    checkpoint = torch.load(
+        checkpoint_path,
+        map_location="cpu",
+    )
+
+    # --------------------------------------------------
+    # Vérification du contenu
+    # --------------------------------------------------
+
+    print(
+        "\nContenu du checkpoint :"
+    )
+
+    for key in checkpoint:
+        print(
+            f"  → {key}"
+        )
+
+    assert (
+        "global_step"
+        in checkpoint
+    )
+
+    assert (
+        "model_state_dict"
+        in checkpoint
+    )
+
+    assert (
+        "optimizer_state_dict"
+        in checkpoint
+    )
+
+    assert (
+        "scheduler_state_dict"
+        in checkpoint
+    )
+
+    print(
+        "\n✓ État du modèle présent"
+    )
+
+    print(
+        "✓ État de l'optimizer présent"
+    )
+
+    print(
+        "✓ État du scheduler présent"
+    )
+
+    print(
+        "✓ Global step présent"
+    )
+
+    # --------------------------------------------------
+    # Vérification du global step
+    # --------------------------------------------------
+
+    assert (
+        checkpoint["global_step"]
+        == trainer.global_step
+    )
+
+    print(
+        "✓ Global step du checkpoint correct"
+    )
+
+    # --------------------------------------------------
+    # Résultat
+    # --------------------------------------------------
+
+    print("\n" + "=" * 60)
+    print("✓ TEST DU TRAINER RÉUSSI")
     print("=" * 60)
 
 
