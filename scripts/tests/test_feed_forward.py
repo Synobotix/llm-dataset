@@ -1,59 +1,95 @@
 import torch
-
+from llm.tokenizer.tokenizer import get_vocab_size
+from llm.data.dataloader import create_train_dataloader
+from llm.model.embedding import TokenEmbedding
+from llm.model.positional_encoding import PositionalEncoding
+from llm.model.attention import MultiHeadCausalSelfAttention
 from llm.model.feed_forward import FeedForward
+
+
+EMBEDDING_DIM = 120
+NUM_HEADS = 3
+MAX_SEQUENCE_LENGTH = 128
+FFN_HIDDEN_DIM = 480
 
 
 def main():
     print("=" * 60)
-    print("TEST FEED FORWARD")
+    print("TEST DU FEED FORWARD NETWORK")
     print("=" * 60)
 
-    # Configuration
-    embedding_dim = 256
-    hidden_dim = 1024
+    train_loader = create_train_dataloader()
 
-    batch_size = 2
-    sequence_length = 256
+    batch = next(iter(train_loader))
+    input_ids = batch["input_ids"]
 
-    # Création du Feed Forward
+    print("\nInput IDs :")
+    print(input_ids.shape)
+
+    # 1. Token Embedding
+    token_embedding = TokenEmbedding(
+        vocab_size = get_vocab_size(),
+        embedding_dim=EMBEDDING_DIM,
+    )
+
+    embeddings = token_embedding(input_ids)
+
+    print("\nToken Embeddings :")
+    print(embeddings.shape)
+
+    # 2. Positional Encoding
+    positional_encoding = PositionalEncoding(
+        embedding_dim=EMBEDDING_DIM,
+        max_sequence_length=MAX_SEQUENCE_LENGTH,
+    )
+
+    x = positional_encoding(embeddings)
+
+    print("\nAprès Positional Encoding :")
+    print(x.shape)
+
+    # 3. Multi-Head Causal Self-Attention
+    attention = MultiHeadCausalSelfAttention(
+        embedding_dim=EMBEDDING_DIM,
+        num_heads=NUM_HEADS,
+        max_sequence_length=MAX_SEQUENCE_LENGTH,
+    )
+
+    x = attention(x)
+
+    print("\nAprès Multi-Head Causal Self-Attention :")
+    print(x.shape)
+
+    # 4. Feed Forward Network
     feed_forward = FeedForward(
-        embedding_dim=embedding_dim,
-        hidden_dim=hidden_dim
+        embedding_dim=EMBEDDING_DIM,
+        hidden_dim=FFN_HIDDEN_DIM,
     )
 
-    # Entrée simulée
-    x = torch.randn(
-        batch_size,
-        sequence_length,
-        embedding_dim
-    )
-
-    # Passage dans le réseau
     output = feed_forward(x)
 
-    print()
-    print("Configuration :")
-    print(f"Embedding dimension : {embedding_dim}")
-    print(f"Hidden dimension    : {hidden_dim}")
-    print(f"Batch size          : {batch_size}")
-    print(f"Sequence length     : {sequence_length}")
+    print("\nAprès Feed Forward Network :")
+    print(output.shape)
 
-    print()
-    print("Shapes :")
-    print(f"Input  : {x.shape}")
-    print(f"Output : {output.shape}")
+    print("\n--- CONFIGURATION ---")
+    print(f"Embedding dimension : {EMBEDDING_DIM}")
+    print(f"FFN hidden dimension : {FFN_HIDDEN_DIM}")
+    print(f"Expansion : {FFN_HIDDEN_DIM // EMBEDDING_DIM}x")
 
-    # Vérifications
-    assert x.shape == (2, 256, 256)
-    assert output.shape == (2, 256, 256)
+    print("\n--- VÉRIFICATION ---")
 
-    print()
-    print("✓ Input shape correcte")
-    print("✓ Output shape correcte")
-    print("✓ Expansion 256 → 1024 correcte")
-    print("✓ Réduction 1024 → 256 correcte")
-    print()
-    print("TEST RÉUSSI")
+    assert input_ids.shape == (2, 128)
+    assert embeddings.shape == (2, 128, EMBEDDING_DIM)
+    assert x.shape == (2, 128, EMBEDDING_DIM)
+    assert output.shape == (2, 128, EMBEDDING_DIM)
+
+    print("✓ Input IDs correctement reçus")
+    print("✓ Token Embedding fonctionne")
+    print("✓ Positional Encoding fonctionne")
+    print("✓ Multi-Head Attention fonctionne")
+    print("✓ Feed Forward fonctionne")
+    print("✓ Dimension interne du FFN = 480")
+    print("✓ Shape finale correcte")
 
 
 if __name__ == "__main__":

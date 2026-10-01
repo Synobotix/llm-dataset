@@ -1,45 +1,59 @@
 import json
 from pathlib import Path
 
-from tokenizers import Tokenizer
+from llm.tokenizer.tokenizer import load_tokenizer
 
 
 # ============================================================
 # CONFIGURATION
 # ============================================================
 
-TOKENIZER_FILE = Path("tokenizer/tokenizer.json")
+TRAIN_FILE = Path(
+    "data/processed/train.jsonl"
+)
 
-TRAIN_FILE = Path("data/processed/train.jsonl")
-VALIDATION_FILE = Path("data/processed/validation.jsonl")
+VALIDATION_FILE = Path(
+    "data/processed/validation.jsonl"
+)
 
-TRAIN_OUTPUT = Path("data/processed/train_tokens.jsonl")
-VALIDATION_OUTPUT = Path("data/processed/validation_tokens.jsonl")
+OUTPUT_DIR = Path(
+    "data/tokenized"
+)
 
-SEQ_LENGTH = 256
+TRAIN_OUTPUT_FILE = (
+    OUTPUT_DIR / "train.jsonl"
+)
+
+VALIDATION_OUTPUT_FILE = (
+    OUTPUT_DIR / "validation.jsonl"
+)
+
+BLOCK_SIZE = 128
 
 
 # ============================================================
-# CHARGEMENT DU TOKENIZER
+# LECTURE DU DATASET
 # ============================================================
 
-def load_tokenizer():
-    if not TOKENIZER_FILE.exists():
-        raise FileNotFoundError(
-            f"Tokenizer introuvable : {TOKENIZER_FILE}"
-        )
+def read_documents(
+    file_path: Path,
+):
+    """
+    Lit les documents JSONL et retourne
+    uniquement les textes valides.
+    """
 
-    return Tokenizer.from_file(str(TOKENIZER_FILE))
+    documents = []
 
+    with file_path.open(
+        "r",
+        encoding="utf-8",
+    ) as file:
 
-# ============================================================
-# LECTURE DES TEXTES
-# ============================================================
-
-def read_texts(file_path):
-    with file_path.open("r", encoding="utf-8") as file:
-
-        for line_number, line in enumerate(file, start=1):
+        for line_number, line in enumerate(
+            file,
+            start=1,
+        ):
 
             line = line.strip()
 
@@ -49,149 +63,371 @@ def read_texts(file_path):
             try:
                 document = json.loads(line)
 
-            except json.JSONDecodeError:
+            except json.JSONDecodeError as error:
+
                 print(
-                    f"Ligne JSON invalide ignorée : "
-                    f"{file_path}:{line_number}"
+                    f"[WARNING] "
+                    f"Ligne {line_number} ignorée : "
+                    f"{error}"
                 )
+
                 continue
 
             text = document.get("text")
 
+            if not isinstance(text, str):
+                continue
+
+            text = text.strip()
+
             if not text:
                 continue
 
-            yield text
+            documents.append(text)
+
+    return documents
 
 
 # ============================================================
 # TOKENISATION
 # ============================================================
 
-def tokenize_texts(tokenizer, texts):
+def tokenize_text(
+    tokenizer,
+    text: str,
+):
+    """
+    Transforme un texte en IDs de tokens.
+    """
 
-    for text in texts:
+    encoding = tokenizer.encode(text)
 
-        encoding = tokenizer.encode(text)
-
-        yield encoding.ids
+    return encoding.ids
 
 
 # ============================================================
-# CREATION DES SEQUENCES
+# CRÉATION DES SÉQUENCES
 # ============================================================
 
-def create_sequences(token_ids, seq_length):
+def create_sequences(
+    token_ids,
+):
+    """
+    Découpe les tokens en séquences de :
+
+        BLOCK_SIZE + 1
+
+    Exemple avec BLOCK_SIZE = 128 :
+
+        [token0 ... token128]
+
+    Puis :
+
+        input_ids = [token0 ... token127]
+        labels    = [token1 ... token128]
+
+    Les séquences incomplètes sont supprimées.
+    """
+
+    sequence_length = BLOCK_SIZE + 1
 
     sequences = []
 
-    for i in range(0, len(token_ids) - seq_length, seq_length):
+    for start in range(
+        0,
+        len(token_ids) - sequence_length + 1,
+        BLOCK_SIZE,
+    ):
 
-        sequence = token_ids[i:i + seq_length + 1]
+        sequence = token_ids[
+            start:start + sequence_length
+        ]
 
-        if len(sequence) == seq_length + 1:
-            sequences.append(sequence)
+        # Sécurité supplémentaire
+        if len(sequence) != sequence_length:
+            continue
+
+        input_ids = sequence[:-1]
+
+        labels = sequence[1:]
+
+        # Vérification
+        if len(input_ids) != BLOCK_SIZE:
+            continue
+
+        if len(labels) != BLOCK_SIZE:
+            continue
+
+        sequences.append(
+            {
+                "input_ids": input_ids,
+                "labels": labels,
+            }
+        )
 
     return sequences
 
 
 # ============================================================
-# TRAITEMENT DU DATASET
+# TRAITEMENT D'UN FICHIER
 # ============================================================
 
-def process_dataset(tokenizer, input_file, output_file):
+def process_dataset(
+    tokenizer,
+    input_file: Path,
+    output_file: Path,
+):
+    """
+    Tokenise un fichier JSONL et génère
+    un fichier JSONL contenant les séquences.
+    """
 
-    print()
-    print("=" * 60)
-    print(f"Traitement : {input_file}")
+    print("\n" + "=" * 60)
+
+    print(
+        f"TRAITEMENT : {input_file}"
+    )
+
     print("=" * 60)
 
-    total_documents = 0
+    documents = read_documents(
+        input_file
+    )
+
+    print(
+        f"Documents lus : {len(documents)}"
+    )
+
     total_tokens = 0
     total_sequences = 0
 
-    with output_file.open("w", encoding="utf-8") as output:
+    OUTPUT_DIR.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
 
-        for token_ids in tokenize_texts(
-            tokenizer,
-            read_texts(input_file)
+    with output_file.open(
+        "w",
+        encoding="utf-8",
+    ) as output:
+
+        for document_index, text in enumerate(
+            documents,
+            start=1,
         ):
 
-            total_documents += 1
+            # ----------------------------------------------
+            # Tokenisation
+            # ----------------------------------------------
+
+            token_ids = tokenize_text(
+                tokenizer,
+                text,
+            )
+
             total_tokens += len(token_ids)
 
+            # ----------------------------------------------
+            # Création des séquences
+            # ----------------------------------------------
+
             sequences = create_sequences(
-                token_ids,
-                SEQ_LENGTH
+                token_ids
             )
+
+            # ----------------------------------------------
+            # Écriture
+            # ----------------------------------------------
 
             for sequence in sequences:
 
-                item = {
-                    "input_ids": sequence[:-1],
-                    "labels": sequence[1:]
-                }
-
                 output.write(
-                    json.dumps(item)
+                    json.dumps(
+                        sequence,
+                        ensure_ascii=False,
+                    )
                     + "\n"
                 )
 
                 total_sequences += 1
 
-    print(f"Documents tokenisés : {total_documents}")
-    print(f"Tokens produits     : {total_tokens}")
-    print(f"Séquences créées    : {total_sequences}")
-    print(f"Sortie              : {output_file}")
+    print(
+        f"Tokens totaux      : {total_tokens:,}"
+    )
+
+    print(
+        f"Séquences créées   : "
+        f"{total_sequences:,}"
+    )
+
+    print(
+        f"Block size          : {BLOCK_SIZE}"
+    )
+
+    print(
+        f"Longueur input_ids  : {BLOCK_SIZE}"
+    )
+
+    print(
+        f"Longueur labels     : {BLOCK_SIZE}"
+    )
+
+    print(
+        f"Fichier             : {output_file}"
+    )
+
+    return total_sequences
 
 
 # ============================================================
-# TEST D'UNE SEQUENCE
+# VÉRIFICATION DU FICHIER
 # ============================================================
 
-def test_sequence(tokenizer, output_file):
+def verify_dataset(
+    file_path: Path,
+):
+    """
+    Vérifie que toutes les séquences ont
+    exactement BLOCK_SIZE tokens.
+    """
 
-    print()
+    print("\n" + "=" * 60)
+
+    print(
+        f"VÉRIFICATION : {file_path}"
+    )
+
     print("=" * 60)
-    print("TEST D'UNE SEQUENCE")
-    print("=" * 60)
 
-    with output_file.open("r", encoding="utf-8") as file:
+    number_of_sequences = 0
 
-        line = file.readline()
+    invalid_sequences = 0
 
-        if not line:
-            print("Aucune séquence trouvée.")
-            return
+    with file_path.open(
+        "r",
+        encoding="utf-8",
+    ) as file:
 
-        item = json.loads(line)
+        for line_number, line in enumerate(
+            file,
+            start=1,
+        ):
 
-    input_ids = item["input_ids"]
-    labels = item["labels"]
+            line = line.strip()
 
-    print(f"Nombre d'input IDs : {len(input_ids)}")
-    print(f"Nombre de labels   : {len(labels)}")
+            if not line:
+                continue
 
-    print()
-    print("Premiers input IDs :")
-    print(input_ids[:20])
+            try:
+                sample = json.loads(line)
 
-    print()
-    print("Premiers labels :")
-    print(labels[:20])
+            except json.JSONDecodeError:
 
-    print()
-    print("Décodage input :")
-    print(tokenizer.decode(input_ids[:20]))
+                print(
+                    f"[ERROR] "
+                    f"Ligne {line_number} invalide."
+                )
 
-    print()
-    print("Décodage labels :")
-    print(tokenizer.decode(labels[:20]))
+                invalid_sequences += 1
 
-    print()
-    print("Vérification du décalage :")
-    print(f"Dernier input  : {input_ids[-1]}")
-    print(f"Premier label  : {labels[0]}")
+                continue
+
+            input_ids = sample.get(
+                "input_ids"
+            )
+
+            labels = sample.get(
+                "labels"
+            )
+
+            number_of_sequences += 1
+
+            # ----------------------------------------------
+            # Vérification input_ids
+            # ----------------------------------------------
+
+            if (
+                not isinstance(
+                    input_ids,
+                    list,
+                )
+                or len(input_ids) != BLOCK_SIZE
+            ):
+
+                print(
+                    f"[ERROR] "
+                    f"Ligne {line_number} : "
+                    f"input_ids = "
+                    f"{len(input_ids) if isinstance(input_ids, list) else 'INVALID'}"
+                )
+
+                invalid_sequences += 1
+
+            # ----------------------------------------------
+            # Vérification labels
+            # ----------------------------------------------
+
+            if (
+                not isinstance(
+                    labels,
+                    list,
+                )
+                or len(labels) != BLOCK_SIZE
+            ):
+
+                print(
+                    f"[ERROR] "
+                    f"Ligne {line_number} : "
+                    f"labels = "
+                    f"{len(labels) if isinstance(labels, list) else 'INVALID'}"
+                )
+
+                invalid_sequences += 1
+
+            # ----------------------------------------------
+            # Vérification du décalage
+            # ----------------------------------------------
+
+            if (
+                isinstance(input_ids, list)
+                and isinstance(labels, list)
+                and len(input_ids) == BLOCK_SIZE
+                and len(labels) == BLOCK_SIZE
+            ):
+
+                if input_ids[1:] != labels[:-1]:
+
+                    print(
+                        f"[ERROR] "
+                        f"Ligne {line_number} : "
+                        f"input_ids / labels "
+                        f"mal décalés."
+                    )
+
+                    invalid_sequences += 1
+
+    print(
+        f"\nSéquences vérifiées : "
+        f"{number_of_sequences:,}"
+    )
+
+    print(
+        f"Erreurs              : "
+        f"{invalid_sequences:,}"
+    )
+
+    if invalid_sequences == 0:
+
+        print(
+            "✓ Dataset valide"
+        )
+
+    else:
+
+        raise ValueError(
+            "Le dataset contient "
+            "des séquences invalides."
+        )
 
 
 # ============================================================
@@ -204,34 +440,115 @@ def main():
     print("TOKENISATION DU DATASET")
     print("=" * 60)
 
+    # --------------------------------------------------------
+    # Vérification des fichiers sources
+    # --------------------------------------------------------
+
+    if not TRAIN_FILE.exists():
+
+        raise FileNotFoundError(
+            f"Dataset train introuvable : "
+            f"{TRAIN_FILE}"
+        )
+
+    if not VALIDATION_FILE.exists():
+
+        raise FileNotFoundError(
+            f"Dataset validation introuvable : "
+            f"{VALIDATION_FILE}"
+        )
+
+    # --------------------------------------------------------
+    # Chargement du tokenizer
+    # --------------------------------------------------------
+
+    print(
+        "\nChargement du tokenizer..."
+    )
+
     tokenizer = load_tokenizer()
 
-    print()
-    print(f"Tokenizer chargé : {TOKENIZER_FILE}")
-    print(f"Vocabulaire      : {tokenizer.get_vocab_size()}")
-    print(f"Sequence length  : {SEQ_LENGTH}")
-
-    process_dataset(
-        tokenizer,
-        TRAIN_FILE,
-        TRAIN_OUTPUT
+    print(
+        f"Vocabulaire : "
+        f"{tokenizer.get_vocab_size()}"
     )
 
-    process_dataset(
-        tokenizer,
-        VALIDATION_FILE,
-        VALIDATION_OUTPUT
+    print(
+        f"Block size : "
+        f"{BLOCK_SIZE}"
     )
 
-    test_sequence(
-        tokenizer,
-        TRAIN_OUTPUT
+    # --------------------------------------------------------
+    # Train
+    # --------------------------------------------------------
+
+    train_sequences = process_dataset(
+        tokenizer=tokenizer,
+        input_file=TRAIN_FILE,
+        output_file=TRAIN_OUTPUT_FILE,
     )
 
-    print()
-    print("=" * 60)
+    # --------------------------------------------------------
+    # Validation
+    # --------------------------------------------------------
+
+    validation_sequences = process_dataset(
+        tokenizer=tokenizer,
+        input_file=VALIDATION_FILE,
+        output_file=VALIDATION_OUTPUT_FILE,
+    )
+
+    # --------------------------------------------------------
+    # Vérification Train
+    # --------------------------------------------------------
+
+    verify_dataset(
+        TRAIN_OUTPUT_FILE
+    )
+
+    # --------------------------------------------------------
+    # Vérification Validation
+    # --------------------------------------------------------
+
+    verify_dataset(
+        VALIDATION_OUTPUT_FILE
+    )
+
+    # --------------------------------------------------------
+    # Résumé
+    # --------------------------------------------------------
+
+    print("\n" + "=" * 60)
     print("TOKENISATION TERMINÉE")
     print("=" * 60)
+
+    print(
+        f"\nTrain      : "
+        f"{train_sequences:,} séquences"
+    )
+
+    print(
+        f"Validation : "
+        f"{validation_sequences:,} séquences"
+    )
+
+    print(
+        f"\nFichiers générés :"
+    )
+
+    print(
+        f"  → {TRAIN_OUTPUT_FILE}"
+    )
+
+    print(
+        f"  → {VALIDATION_OUTPUT_FILE}"
+    )
+
+    print(
+        "\n✓ Toutes les séquences ont "
+        f"{BLOCK_SIZE} input_ids et "
+        f"{BLOCK_SIZE} labels."
+    )
 
 
 if __name__ == "__main__":

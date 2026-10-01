@@ -1,4 +1,3 @@
-
 import json
 from pathlib import Path
 
@@ -6,19 +5,14 @@ import torch
 from torch.utils.data import Dataset
 
 
-class LLMDataset(Dataset):
+class CausalLanguageModelingDataset(Dataset):
     """
-    Dataset pour l'entraînement d'un modèle de langage causal.
-
-    Format attendu du JSONL :
-
-    {
-        "input_ids": [12, 45, 78, ...],
-        "labels": [45, 78, 91, ...]
-    }
+    Dataset PyTorch pour l'entraînement d'un
+    Transformer causal de type GPT.
     """
 
     def __init__(self, file_path: str | Path):
+
         self.file_path = Path(file_path)
 
         if not self.file_path.exists():
@@ -28,12 +22,22 @@ class LLMDataset(Dataset):
 
         self.samples = []
 
-        self._load()
+        self._load_data()
 
-    def _load(self) -> None:
-        with self.file_path.open("r", encoding="utf-8") as file:
+    def _load_data(self):
+        """
+        Charge les séquences depuis le JSONL.
+        """
 
-            for line_number, line in enumerate(file, start=1):
+        with self.file_path.open(
+            "r",
+            encoding="utf-8"
+        ) as file:
+
+            for line_number, line in enumerate(
+                file,
+                start=1
+            ):
 
                 line = line.strip()
 
@@ -41,50 +45,42 @@ class LLMDataset(Dataset):
                     continue
 
                 try:
-                    data = json.loads(line)
+                    sample = json.loads(line)
 
-                except json.JSONDecodeError as exc:
-                    raise ValueError(
-                        f"JSON invalide ligne {line_number} "
-                        f"dans {self.file_path}"
-                    ) from exc
+                except json.JSONDecodeError as error:
 
-                if "input_ids" not in data:
-                    raise KeyError(
-                        f"'input_ids' absent ligne {line_number} "
-                        f"dans {self.file_path}"
+                    print(
+                        f"[WARNING] "
+                        f"Ligne {line_number} ignorée : "
+                        f"{error}"
                     )
 
-                if "labels" not in data:
-                    raise KeyError(
-                        f"'labels' absent ligne {line_number} "
-                        f"dans {self.file_path}"
-                    )
+                    continue
 
-                input_ids = data["input_ids"]
-                labels = data["labels"]
+                input_ids = sample.get(
+                    "input_ids"
+                )
 
-                if not isinstance(input_ids, list):
-                    raise TypeError(
-                        f"'input_ids' doit être une liste "
-                        f"ligne {line_number}"
-                    )
+                labels = sample.get(
+                    "labels"
+                )
 
-                if not isinstance(labels, list):
-                    raise TypeError(
-                        f"'labels' doit être une liste "
-                        f"ligne {line_number}"
-                    )
+                if not isinstance(
+                    input_ids,
+                    list
+                ):
+                    continue
+
+                if not isinstance(
+                    labels,
+                    list
+                ):
+                    continue
 
                 if len(input_ids) != len(labels):
                     raise ValueError(
-                        f"'input_ids' et 'labels' doivent avoir "
-                        f"la même longueur ligne {line_number}"
-                    )
-
-                if len(input_ids) == 0:
-                    raise ValueError(
-                        f"Séquence vide ligne {line_number}"
+                        f"Longueurs différentes à la "
+                        f"ligne {line_number}"
                     )
 
                 self.samples.append(
@@ -94,10 +90,18 @@ class LLMDataset(Dataset):
                     }
                 )
 
-    def __len__(self) -> int:
+    def __len__(self):
+        """
+        Nombre total de séquences.
+        """
+
         return len(self.samples)
 
-    def __getitem__(self, index: int) -> dict[str, torch.Tensor]:
+    def __getitem__(self, index):
+        """
+        Retourne une séquence sous forme de tensors PyTorch.
+        """
+
         sample = self.samples[index]
 
         input_ids = torch.tensor(

@@ -2,61 +2,52 @@ from pathlib import Path
 
 from torch.utils.data import DataLoader
 
-from llm.data.dataset import LLMDataset
+from llm.data.dataset import CausalLanguageModelingDataset
 
 
-def create_dataloader(
-    dataset_path: str | Path,
-    batch_size: int,
-    shuffle: bool,
-    num_workers: int = 0,
-) -> DataLoader:
-    """
-    Crée un DataLoader pour le dataset donné.
-    """
+TRAIN_FILE = Path(
+    "data/tokenized/train.jsonl"
+)
 
-    dataset = LLMDataset(dataset_path)
+VALIDATION_FILE = Path(
+    "data/tokenized/validation.jsonl"
+)
+
+
+BATCH_SIZE = 2
+
+SHUFFLE_TRAIN = True
+
+NUM_WORKERS = 0
+
+
+def create_train_dataloader():
+
+    dataset = CausalLanguageModelingDataset(
+        TRAIN_FILE
+    )
 
     dataloader = DataLoader(
         dataset,
-        batch_size=batch_size,
-        shuffle=shuffle,
-        num_workers=num_workers,
-        pin_memory=True,
+        batch_size=BATCH_SIZE,
+        shuffle=SHUFFLE_TRAIN,
+        num_workers=NUM_WORKERS,
     )
 
     return dataloader
 
 
-def create_train_dataloader(
-    dataset_path: str | Path,
-    batch_size: int,
-    num_workers: int = 0,
-) -> DataLoader:
-    """
-    DataLoader d'entraînement.
-    """
+def create_validation_dataloader():
 
-    return create_dataloader(
-        dataset_path=dataset_path,
-        batch_size=batch_size,
-        shuffle=True,
-        num_workers=num_workers,
+    dataset = CausalLanguageModelingDataset(
+        VALIDATION_FILE
     )
 
-
-def create_validation_dataloader(
-    dataset_path: str | Path,
-    batch_size: int,
-    num_workers: int = 0,
-) -> DataLoader:
-    """
-    DataLoader de validation.
-    """
-
-    return create_dataloader(
-        dataset_path=dataset_path,
-        batch_size=batch_size,
+    dataloader = DataLoader(
+        dataset,
+        batch_size=BATCH_SIZE,
         shuffle=False,
-        num_workers=num_workers,
+        num_workers=NUM_WORKERS,
     )
+
+    return dataloader

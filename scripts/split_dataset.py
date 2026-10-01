@@ -4,7 +4,7 @@ from pathlib import Path
 
 
 # ============================================================
-# Configuration
+# CONFIGURATION
 # ============================================================
 
 INPUT_FILE = Path("data/processed/c4_clean.jsonl")
@@ -12,18 +12,25 @@ INPUT_FILE = Path("data/processed/c4_clean.jsonl")
 TRAIN_FILE = Path("data/processed/train.jsonl")
 VALIDATION_FILE = Path("data/processed/validation.jsonl")
 
-TRAIN_RATIO = 0.90
+# Premier palier
+TOTAL_DOCUMENTS = 100
+
+# Pour le premier test :
+# 80 % entraînement / 20 % validation
+VALIDATION_RATIO = 0.2
+
+# Reproductibilité
 SEED = 42
 
 
 # ============================================================
-# Lecture du dataset
+# LECTURE DU DATASET
 # ============================================================
 
-def load_dataset(file_path: Path):
-    dataset = []
+def load_jsonl(path: Path) -> list[dict]:
+    documents = []
 
-    with file_path.open("r", encoding="utf-8") as file:
+    with path.open("r", encoding="utf-8") as file:
         for line_number, line in enumerate(file, start=1):
             line = line.strip()
 
@@ -32,47 +39,25 @@ def load_dataset(file_path: Path):
 
             try:
                 document = json.loads(line)
-                dataset.append(document)
-
             except json.JSONDecodeError as error:
-                print(
-                    f"[WARNING] Ligne {line_number} ignorée : "
-                    f"{error}"
-                )
+                raise ValueError(
+                    f"JSON invalide à la ligne {line_number}"
+                ) from error
 
-    return dataset
+            documents.append(document)
 
-
-# ============================================================
-# Split
-# ============================================================
-
-def split_dataset(dataset):
-    random_generator = random.Random(SEED)
-
-    # Copie pour ne pas modifier le dataset original
-    shuffled_dataset = dataset.copy()
-
-    # Mélange reproductible
-    random_generator.shuffle(shuffled_dataset)
-
-    train_size = int(len(shuffled_dataset) * TRAIN_RATIO)
-
-    train_dataset = shuffled_dataset[:train_size]
-    validation_dataset = shuffled_dataset[train_size:]
-
-    return train_dataset, validation_dataset
+    return documents
 
 
 # ============================================================
-# Sauvegarde
+# SAUVEGARDE JSONL
 # ============================================================
 
-def save_dataset(dataset, file_path: Path):
-    file_path.parent.mkdir(parents=True, exist_ok=True)
+def save_jsonl(path: Path, documents: list[dict]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
 
-    with file_path.open("w", encoding="utf-8") as file:
-        for document in dataset:
+    with path.open("w", encoding="utf-8") as file:
+        for document in documents:
             file.write(
                 json.dumps(
                     document,
@@ -82,54 +67,75 @@ def save_dataset(dataset, file_path: Path):
 
 
 # ============================================================
-# Programme principal
+# SPLIT
+# ============================================================
+
+def split_dataset(
+    documents: list[dict],
+    total_documents: int,
+    validation_ratio: float,
+    seed: int
+) -> tuple[list[dict], list[dict]]:
+
+    if total_documents > len(documents):
+        raise ValueError(
+            f"Le dataset contient seulement {len(documents)} documents, "
+            f"mais {total_documents} sont demandés."
+        )
+
+    # On prend un sous-ensemble
+    selected_documents = documents[:total_documents].copy()
+
+    # Mélange reproductible
+    random_generator = random.Random(seed)
+    random_generator.shuffle(selected_documents)
+
+    validation_size = max(
+        1,
+        round(total_documents * validation_ratio)
+    )
+
+    validation_documents = selected_documents[:validation_size]
+    train_documents = selected_documents[validation_size:]
+
+    return train_documents, validation_documents
+
+
+# ============================================================
+# MAIN
 # ============================================================
 
 def main():
     print("=" * 60)
-    print("SPLIT DU DATASET C4")
+    print("SPLIT DU DATASET")
     print("=" * 60)
 
-    if not INPUT_FILE.exists():
-        raise FileNotFoundError(
-            f"Dataset introuvable : {INPUT_FILE}"
-        )
+    print(f"Dataset source : {INPUT_FILE}")
+    print(f"Documents demandés : {TOTAL_DOCUMENTS}")
 
-    print(f"\nDataset source : {INPUT_FILE}")
+    documents = load_jsonl(INPUT_FILE)
 
-    # Chargement
-    dataset = load_dataset(INPUT_FILE)
+    print(f"Documents disponibles : {len(documents)}")
 
-    print(f"Documents chargés : {len(dataset)}")
+    train_documents, validation_documents = split_dataset(
+        documents=documents,
+        total_documents=TOTAL_DOCUMENTS,
+        validation_ratio=VALIDATION_RATIO,
+        seed=SEED
+    )
 
-    if len(dataset) < 2:
-        raise ValueError(
-            "Le dataset doit contenir au moins 2 documents."
-        )
+    save_jsonl(TRAIN_FILE, train_documents)
+    save_jsonl(VALIDATION_FILE, validation_documents)
 
-    # Split
-    train_dataset, validation_dataset = split_dataset(dataset)
+    print()
+    print("Résultat :")
+    print(f"  Train       : {len(train_documents)} documents")
+    print(f"  Validation  : {len(validation_documents)} documents")
 
-    # Sauvegarde
-    save_dataset(train_dataset, TRAIN_FILE)
-    save_dataset(validation_dataset, VALIDATION_FILE)
+    print()
+    print(f"Train sauvegardé       : {TRAIN_FILE}")
+    print(f"Validation sauvegardée : {VALIDATION_FILE}")
 
-    # Résultats
-    print("\nRésultat du split :")
-    print(f"  Train      : {len(train_dataset)} documents")
-    print(f"  Validation : {len(validation_dataset)} documents")
-
-    print("\nFichiers créés :")
-    print(f"  → {TRAIN_FILE}")
-    print(f"  → {VALIDATION_FILE}")
-
-    print("\nConfiguration :")
-    print(f"  Train ratio : {TRAIN_RATIO:.0%}")
-    print(f"  Validation  : {(1 - TRAIN_RATIO):.0%}")
-    print(f"  Seed        : {SEED}")
-
-    print("\n" + "=" * 60)
-    print("SPLIT TERMINÉ")
     print("=" * 60)
 
 

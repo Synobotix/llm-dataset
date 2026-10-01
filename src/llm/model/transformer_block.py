@@ -1,89 +1,53 @@
 import torch
 import torch.nn as nn
 
-from llm.model.attention import CausalSelfAttention
+from llm.model.attention import MultiHeadCausalSelfAttention
 from llm.model.feed_forward import FeedForward
 
 
 class TransformerBlock(nn.Module):
-    """
-    Un bloc Transformer causal.
-
-    Architecture :
-
-        x
-        │
-        ├── LayerNorm
-        │
-        ├── Causal Self-Attention
-        │
-        └── Résiduel
-              ↓
-        LayerNorm
-              ↓
-        Feed Forward
-              ↓
-        Résiduel
-              ↓
-             sortie
-    """
-
     def __init__(
         self,
-        embedding_dim: int = 256,
-        num_heads: int = 8,
-        hidden_dim: int = 1024,
-        max_sequence_length: int = 256
+        embedding_dim: int,
+        num_heads: int,
+        ffn_hidden_dim: int,
+        max_sequence_length: int,
     ):
         super().__init__()
 
-        # Première normalisation
-        self.attention_norm = nn.LayerNorm(
-            embedding_dim
-        )
+        self.layer_norm_1 = nn.LayerNorm(embedding_dim)
 
-        # Causal Self-Attention
-        self.attention = CausalSelfAttention(
+        self.attention = MultiHeadCausalSelfAttention(
             embedding_dim=embedding_dim,
             num_heads=num_heads,
-            max_sequence_length=max_sequence_length
+            max_sequence_length=max_sequence_length,
         )
 
-        # Deuxième normalisation
-        self.feed_forward_norm = nn.LayerNorm(
-            embedding_dim
-        )
+        self.layer_norm_2 = nn.LayerNorm(embedding_dim)
 
-        # Feed Forward Network
         self.feed_forward = FeedForward(
             embedding_dim=embedding_dim,
-            hidden_dim=hidden_dim
+            hidden_dim=ffn_hidden_dim,
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Args:
-            x:
-                [batch, sequence_length, embedding_dim]
 
-        Returns:
-            [batch, sequence_length, embedding_dim]
-        """
+        # 1. Attention + connexion résiduelle
+        attention_input = self.layer_norm_1(x)
 
-        # --------------------------------------------------------
-        # 1. Causal Self-Attention + connexion résiduelle
-        # --------------------------------------------------------
-
-        x = x + self.attention(
-            self.attention_norm(x)
+        attention_output = self.attention(
+            attention_input
         )
 
-        # --------------------------------------------------------
+        x = x + attention_output
+
         # 2. Feed Forward + connexion résiduelle
-        # --------------------------------------------------------
+        feed_forward_input = self.layer_norm_2(x)
 
-        x = x + self.feed_forward(
-            self.feed_forward_norm(x)
+        feed_forward_output = self.feed_forward(
+            feed_forward_input
         )
+
+        x = x + feed_forward_output
 
         return x

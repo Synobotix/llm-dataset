@@ -1,85 +1,72 @@
-
 import random
-from pathlib import Path
 
 import numpy as np
 import torch
-import yaml
 
 from llm.data.dataloader import (
     create_train_dataloader,
     create_validation_dataloader,
 )
-from llm.model.transformer import CausalTransformer
+from llm.model.transformer import Transformer
 from llm.training.trainer import Trainer
+from llm.training.checkpoint import load_checkpoint
 
 
 # ============================================================
-# CHEMINS DU PROJET
+# CONFIGURATION
 # ============================================================
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+VOCAB_SIZE = 994
 
-MODEL_CONFIG_PATH = (
-    PROJECT_ROOT / "configs" / "model.yaml"
-)
+D_MODEL = 120
+NUM_HEADS = 3
+NUM_LAYERS = 2
+FFN_HIDDEN_DIM = 480
 
-TRAINING_CONFIG_PATH = (
-    PROJECT_ROOT / "configs" / "training.yaml"
-)
+MAX_SEQ_LEN = 128
 
-TRAIN_DATA_PATH = (
-    PROJECT_ROOT
-    / "data"
-    / "processed"
-    / "train_tokens.jsonl"
-)
+EPOCHS = 20
 
-VALIDATION_DATA_PATH = (
-    PROJECT_ROOT
-    / "data"
-    / "processed"
-    / "validation_tokens.jsonl"
-)
+LEARNING_RATE = 1e-4
+WEIGHT_DECAY = 0.01
+
+DEVICE = "cpu"
+
+SEED = 42
+
+GRADIENT_CLIP = 1.0
+SAVE_EVERY = 50
 
 
 # ============================================================
-# UTILITAIRES
+# CHECKPOINT
 # ============================================================
 
-def load_yaml(path: Path) -> dict:
-    """
-    Charge un fichier YAML.
-    """
+CHECKPOINT_TO_LOAD = (
+    "checkpoints/student_v1/student_v1_25docs.pt"
+)
 
-    with path.open(
-        "r",
-        encoding="utf-8"
-    ) as file:
-        return yaml.safe_load(file)
+CHECKPOINT_TO_SAVE = (
+    "student_v1_100docs.pt"
+)
 
+
+# ============================================================
+# SEED
+# ============================================================
 
 def set_seed(seed: int) -> None:
-    """
-    Configure les seeds pour rendre
-    l'entraînement reproductible.
-    """
 
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
 
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
 
+# ============================================================
+# NOMBRE DE PARAMÈTRES
+# ============================================================
 
-def count_parameters(
-    model: torch.nn.Module
-) -> int:
-    """
-    Compte le nombre total de paramètres
-    du modèle.
-    """
+def count_parameters(model):
 
     return sum(
         parameter.numel()
@@ -93,441 +80,241 @@ def count_parameters(
 
 def main():
 
+    set_seed(SEED)
+
+    print("=" * 60)
+    print("REPRISE DE L'ENTRAÎNEMENT STUDENT V1")
+    print("=" * 60)
+
+    print(f"Device       : {DEVICE}")
+    print(f"PyTorch      : {torch.__version__}")
+    print()
+
     # ========================================================
     # CONFIGURATION
     # ========================================================
 
-    model_config = load_yaml(
-        MODEL_CONFIG_PATH
-    )
+    print("Configuration du modèle :")
 
-    training_config = load_yaml(
-        TRAINING_CONFIG_PATH
-    )
-
-    seed = training_config.get(
-        "seed",
-        42
-    )
-
-    set_seed(seed)
-
-    # ========================================================
-    # DEVICE
-    # ========================================================
-
-    configured_device = training_config.get(
-        "device",
-        "cuda"
-    )
-
-    if (
-        configured_device == "cuda"
-        and not torch.cuda.is_available()
-    ):
-
-        print(
-            "⚠️ CUDA demandée mais indisponible."
-        )
-
-        print(
-            "Utilisation du CPU."
-        )
-
-        device = "cpu"
-
-    else:
-
-        device = configured_device
-
-    # ========================================================
-    # INFORMATIONS ENVIRONNEMENT
-    # ========================================================
-
-    print("=" * 60)
-    print("ENTRAÎNEMENT STUDENT V1")
-    print("=" * 60)
-
-    print(
-        f"Device       : {device}"
-    )
-
-    print(
-        f"PyTorch      : {torch.__version__}"
-    )
-
-    if torch.cuda.is_available():
-
-        print(
-            f"GPU          : "
-            f"{torch.cuda.get_device_name(0)}"
-        )
-
-        print(
-            f"CUDA         : "
-            f"{torch.version.cuda}"
-        )
+    print(f"  vocab_size          : {VOCAB_SIZE}")
+    print(f"  d_model             : {D_MODEL}")
+    print(f"  num_heads           : {NUM_HEADS}")
+    print(f"  num_layers          : {NUM_LAYERS}")
+    print(f"  ffn_hidden_dim      : {FFN_HIDDEN_DIM}")
+    print(f"  max_sequence_length : {MAX_SEQ_LEN}")
 
     print()
 
     # ========================================================
-    # CONFIGURATION DU MODÈLE
+    # DATALOADERS
     # ========================================================
 
-    vocab_size = model_config[
-        "vocab_size"
-    ]
+    print("Création des DataLoaders...")
 
-    embedding_dim = model_config[
-        "d_model"
-    ]
+    train_dataloader = create_train_dataloader()
 
-    num_heads = model_config[
-        "num_heads"
-    ]
+    validation_dataloader = create_validation_dataloader()
 
-    num_layers = model_config[
-        "num_layers"
-    ]
-
-    ff_hidden_dim = model_config[
-        "d_ff"
-    ]
-
-    max_sequence_length = model_config[
-        "max_seq_len"
-    ]
-
-    dropout = model_config.get(
-        "dropout",
-        0.1
+    print(
+        f"Train samples       : "
+        f"{len(train_dataloader.dataset)}"
     )
 
     print(
-        "Configuration du modèle :"
+        f"Validation samples  : "
+        f"{len(validation_dataloader.dataset)}"
     )
 
     print(
-        f"  vocab_size          : "
-        f"{vocab_size}"
+        f"Batch size          : "
+        f"{train_dataloader.batch_size}"
     )
 
     print(
-        f"  d_model             : "
-        f"{embedding_dim}"
-    )
-
-    print(
-        f"  num_heads           : "
-        f"{num_heads}"
-    )
-
-    print(
-        f"  num_layers          : "
-        f"{num_layers}"
-    )
-
-    print(
-        f"  d_ff                : "
-        f"{ff_hidden_dim}"
-    )
-
-    print(
-        f"  max_seq_len         : "
-        f"{max_sequence_length}"
-    )
-
-    print(
-        f"  dropout             : "
-        f"{dropout}"
-    )
-
-    # ========================================================
-    # CRÉATION DU MODÈLE
-    # ========================================================
-
-    model = CausalTransformer(
-
-        vocab_size=vocab_size,
-
-        embedding_dim=embedding_dim,
-
-        num_heads=num_heads,
-
-        num_layers=num_layers,
-
-        ff_hidden_dim=ff_hidden_dim,
-
-        max_sequence_length=max_sequence_length,
-    )
-
-    total_parameters = count_parameters(
-        model
+        f"Batches par époque  : "
+        f"{len(train_dataloader)}"
     )
 
     print()
+
+    # ========================================================
+    # MODÈLE
+    # ========================================================
+
+    print("Création du Transformer...")
+
+    model = Transformer(
+        vocab_size=VOCAB_SIZE,
+        embedding_dim=D_MODEL,
+        num_heads=NUM_HEADS,
+        ffn_hidden_dim=FFN_HIDDEN_DIM,
+        num_layers=NUM_LAYERS,
+        max_sequence_length=MAX_SEQ_LEN,
+    )
+
+    print("Modèle créé.")
 
     print(
         f"Nombre de paramètres : "
-        f"{total_parameters:,}"
+        f"{count_parameters(model):,}"
     )
-
-    # ========================================================
-    # DATASETS
-    # ========================================================
-
-    batch_size = training_config[
-        "batch_size"
-    ]
 
     print()
 
+    # ========================================================
+    # VÉRIFICATION RÉELLE
+    # ========================================================
+
+    print("Vérification du modèle :")
+
     print(
-        "Chargement des datasets..."
-    )
-
-    train_dataloader = (
-        create_train_dataloader(
-            dataset_path=TRAIN_DATA_PATH,
-            batch_size=batch_size,
-            num_workers=0,
-        )
-    )
-
-    validation_dataloader = (
-        create_validation_dataloader(
-            dataset_path=VALIDATION_DATA_PATH,
-            batch_size=batch_size,
-            num_workers=0,
-        )
+        f"  model.vocab_size       : "
+        f"{model.vocab_size}"
     )
 
     print(
-        f"Train       : "
-        f"{len(train_dataloader.dataset)} "
-        f"séquences"
+        f"  model.embedding_dim    : "
+        f"{model.embedding_dim}"
     )
 
     print(
-        f"Validation  : "
-        f"{len(validation_dataloader.dataset)} "
-        f"séquences"
+        f"  model.num_heads       : "
+        f"{model.num_heads}"
     )
 
     print(
-        f"Batch size  : "
-        f"{batch_size}"
+        f"  model.ffn_hidden_dim  : "
+        f"{model.ffn_hidden_dim}"
     )
 
     print(
-        f"Batches/epoch : "
-        f"{len(train_dataloader)}"
+        f"  model.num_layers      : "
+        f"{model.num_layers}"
     )
+
+    print(
+        f"  model.max_sequence_length : "
+        f"{model.max_sequence_length}"
+    )
+
+    print()
+
+    # ========================================================
+    # VÉRIFICATION DE L'EMBEDDING
+    # ========================================================
+
+    print("Vérification de la matrice d'embedding :")
+
+    print(
+        "  Embedding shape :",
+        model.token_embedding.embedding.weight.shape
+    )
+
+    print()
 
     # ========================================================
     # OPTIMIZER
     # ========================================================
 
-    learning_rate = training_config[
-        "learning_rate"
-    ]
-
-    weight_decay = training_config[
-        "weight_decay"
-    ]
-
     optimizer = torch.optim.AdamW(
-
         model.parameters(),
-
-        lr=learning_rate,
-
-        weight_decay=weight_decay,
+        lr=LEARNING_RATE,
+        weight_decay=WEIGHT_DECAY,
     )
+
+    print("Optimizer : AdamW")
+    print(f"Learning rate : {LEARNING_RATE}")
+    print(f"Weight decay  : {WEIGHT_DECAY}")
+
+    print()
+
+    # ========================================================
+    # CHARGEMENT DU CHECKPOINT
+    # ========================================================
+
+    print("=" * 60)
+    print("CHARGEMENT DU CHECKPOINT")
+    print("=" * 60)
+
+    global_step = load_checkpoint(
+        model=model,
+        optimizer=optimizer,
+        scheduler=None,
+        checkpoint_path=CHECKPOINT_TO_LOAD,
+        device=DEVICE,
+    )
+
+    print()
 
     # ========================================================
     # SCHEDULER
     # ========================================================
 
-    epochs = training_config[
-        "epochs"
-    ]
-
-    steps_per_epoch = len(
-        train_dataloader
+    total_training_steps = (
+        EPOCHS * len(train_dataloader)
     )
 
-    total_steps = (
-        steps_per_epoch * epochs
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer,
+        T_max=total_training_steps,
     )
 
-    scheduler_name = (
-        training_config.get(
-            "scheduler",
-            "cosine"
-        )
+    # Restaurer la position du scheduler
+    # à partir du global_step du checkpoint.
+    scheduler.last_epoch = global_step
+
+    print("Scheduler : CosineAnnealingLR")
+
+    print(
+        f"Total training steps : "
+        f"{total_training_steps}"
     )
 
-    scheduler = None
+    print(
+        f"Global step restauré : "
+        f"{global_step}"
+    )
 
-    if scheduler_name == "cosine":
+    print(
+        f"Scheduler last_epoch : "
+        f"{scheduler.last_epoch}"
+    )
 
-        warmup_steps = training_config.get(
-            "warmup_steps",
-            0
-        )
-
-        warmup_steps = min(
-            warmup_steps,
-            total_steps
-        )
-
-        def lr_lambda(
-            current_step: int
-        ):
-
-            # ------------------------------
-            # Warmup
-            # ------------------------------
-
-            if current_step < warmup_steps:
-
-                if warmup_steps == 0:
-                    return 1.0
-
-                return (
-                    float(current_step + 1)
-                    / float(warmup_steps)
-                )
-
-            # ------------------------------
-            # Cosine decay
-            # ------------------------------
-
-            progress = (
-                current_step
-                - warmup_steps
-            ) / max(
-                total_steps
-                - warmup_steps,
-                1
-            )
-
-            return 0.5 * (
-                1.0
-                + np.cos(
-                    np.pi * progress
-                )
-            )
-
-        scheduler = (
-            torch.optim.lr_scheduler.LambdaLR(
-                optimizer,
-                lr_lambda
-            )
-        )
-
-    # ========================================================
-    # CONFIGURATION ENTRAÎNEMENT
-    # ========================================================
+    print(
+        f"Learning rate actuel : "
+        f"{optimizer.param_groups[0]['lr']}"
+    )
 
     print()
-
-    print(
-        "Configuration entraînement :"
-    )
-
-    print(
-        f"  batch_size       : "
-        f"{batch_size}"
-    )
-
-    print(
-        f"  epochs           : "
-        f"{epochs}"
-    )
-
-    print(
-        f"  learning_rate    : "
-        f"{learning_rate}"
-    )
-
-    print(
-        f"  weight_decay     : "
-        f"{weight_decay}"
-    )
-
-    print(
-        f"  scheduler        : "
-        f"{scheduler_name}"
-    )
-
-    print(
-        f"  warmup_steps     : "
-        f"{training_config.get('warmup_steps', 0)}"
-    )
-
-    print(
-        f"  total_steps      : "
-        f"{total_steps}"
-    )
-
-    print(
-        f"  gradient_clip    : "
-        f"{training_config.get('gradient_clip', 1.0)}"
-    )
 
     # ========================================================
     # TRAINER
     # ========================================================
 
     trainer = Trainer(
-
         model=model,
-
         train_dataloader=train_dataloader,
-
-        validation_dataloader=(
-            validation_dataloader
-        ),
-
+        validation_dataloader=validation_dataloader,
         optimizer=optimizer,
-
         scheduler=scheduler,
-
-        device=device,
-
-        epochs=epochs,
-
-        gradient_clip=(
-            training_config.get(
-                "gradient_clip",
-                1.0
-            )
-        ),
-
-        eval_every=(
-            training_config.get(
-                "eval_every",
-                20
-            )
-        ),
-
-        save_every=(
-            training_config.get(
-                "save_every",
-                50
-            )
-        ),
-
-        checkpoint_dir=(
-            PROJECT_ROOT
-            / training_config.get(
-                "checkpoint_dir",
-                "checkpoints/student_v1"
-            )
-        ),
+        device=DEVICE,
+        epochs=EPOCHS,
+        gradient_clip=GRADIENT_CLIP,
+        save_every=SAVE_EVERY,
+        checkpoint_dir="checkpoints/student_v1",
     )
+
+    # Restaurer le compteur global
+    trainer.global_step = global_step
+
+    print("Trainer créé.")
+
+    print(
+        f"Global step : "
+        f"{trainer.global_step}"
+    )
+
+    print()
 
     # ========================================================
     # ENTRAÎNEMENT
@@ -535,11 +322,29 @@ def main():
 
     trainer.train()
 
+    # ========================================================
+    # SAUVEGARDE DU NOUVEAU CHECKPOINT
+    # ========================================================
+
+    trainer.save_checkpoint(
+        filename=CHECKPOINT_TO_SAVE
+    )
+
+    print()
+
+    print("=" * 60)
+    print("NOUVEAU CHECKPOINT")
+    print("=" * 60)
+
+    print(
+        f"Sauvegardé dans : "
+        f"checkpoints/student_v1/{CHECKPOINT_TO_SAVE}"
+    )
+
 
 # ============================================================
-# ENTRY POINT
+# POINT D'ENTRÉE
 # ============================================================
 
 if __name__ == "__main__":
     main()
-
