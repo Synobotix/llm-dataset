@@ -1,0 +1,14 @@
+VOCAB_SIZE      = 5885
+D_MODEL         = 256
+NUM_HEADS       = 4
+HIDDEN_DIM      = 680
+NUM_BLOCKS      = 2
+MAX_SEQUENCE    = 128
+
+BATCH_SIZE      = 2
+EPOCHS          = 3
+LEARNING_RATE   = 0.001
+WEIGHT_DECAY    = 0.01
+GRADIENT_CLIP   = 1.0
+
+

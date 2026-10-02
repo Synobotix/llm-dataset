@@ -3,32 +3,13 @@ from pathlib import Path
 
 from llm.tokenizer.tokenizer import load_tokenizer
 
-
-# ============================================================
-# CONFIGURATION
-# ============================================================
-
-TRAIN_FILE = Path(
-    "data/processed/train.jsonl"
+from llm.config.parameters import (
+    TRAIN_FILE,
+    VALIDATION_FILE,
+    TRAIN_OUTPUT_FILE,
+    VALIDATION_OUTPUT_FILE,
+    BLOCK_SIZE,
 )
-
-VALIDATION_FILE = Path(
-    "data/processed/validation.jsonl"
-)
-
-OUTPUT_DIR = Path(
-    "data/tokenized"
-)
-
-TRAIN_OUTPUT_FILE = (
-    OUTPUT_DIR / "train.jsonl"
-)
-
-VALIDATION_OUTPUT_FILE = (
-    OUTPUT_DIR / "validation.jsonl"
-)
-
-BLOCK_SIZE = 128
 
 
 # ============================================================
@@ -143,7 +124,10 @@ def create_sequences(
             start:start + sequence_length
         ]
 
+        # ----------------------------------------------------
         # Sécurité supplémentaire
+        # ----------------------------------------------------
+
         if len(sequence) != sequence_length:
             continue
 
@@ -151,7 +135,10 @@ def create_sequences(
 
         labels = sequence[1:]
 
+        # ----------------------------------------------------
         # Vérification
+        # ----------------------------------------------------
+
         if len(input_ids) != BLOCK_SIZE:
             continue
 
@@ -201,7 +188,7 @@ def process_dataset(
     total_tokens = 0
     total_sequences = 0
 
-    OUTPUT_DIR.mkdir(
+    output_file.parent.mkdir(
         parents=True,
         exist_ok=True,
     )
@@ -252,7 +239,8 @@ def process_dataset(
                 total_sequences += 1
 
     print(
-        f"Tokens totaux      : {total_tokens:,}"
+        f"Tokens totaux      : "
+        f"{total_tokens:,}"
     )
 
     print(
@@ -261,19 +249,23 @@ def process_dataset(
     )
 
     print(
-        f"Block size          : {BLOCK_SIZE}"
+        f"Block size          : "
+        f"{BLOCK_SIZE}"
     )
 
     print(
-        f"Longueur input_ids  : {BLOCK_SIZE}"
+        f"Longueur input_ids  : "
+        f"{BLOCK_SIZE}"
     )
 
     print(
-        f"Longueur labels     : {BLOCK_SIZE}"
+        f"Longueur labels     : "
+        f"{BLOCK_SIZE}"
     )
 
     print(
-        f"Fichier             : {output_file}"
+        f"Fichier             : "
+        f"{output_file}"
     )
 
     return total_sequences
@@ -468,9 +460,11 @@ def main():
 
     tokenizer = load_tokenizer()
 
+    vocab_size = tokenizer.get_vocab_size()
+
     print(
         f"Vocabulaire : "
-        f"{tokenizer.get_vocab_size()}"
+        f"{vocab_size}"
     )
 
     print(
@@ -523,7 +517,12 @@ def main():
     print("=" * 60)
 
     print(
-        f"\nTrain      : "
+        f"\nVocabulaire : "
+        f"{vocab_size}"
+    )
+
+    print(
+        f"Train      : "
         f"{train_sequences:,} séquences"
     )
 
