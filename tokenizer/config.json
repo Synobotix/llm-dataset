@@ -1,10 +1,11 @@
 {
-  "type": "BPE",
-  "vocab_size": 994,
-  "unk_token": "<unk>",
-  "pad_token": "<pad>",
-  "bos_token": "<bos>",
-  "eos_token": "<eos>",
-  "byte_fallback": true,
-  "pre_tokenizer": "ByteLevel"
+  "max_vocab_size": 16000,
+  "actual_vocab_size": 5885,
+  "min_frequency": 2,
+  "special_tokens": [
+    "<pad>",
+    "<unk>",
+    "<bos>",
+    "<eos>"
+  ]
 }
