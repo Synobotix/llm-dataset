@@ -12,7 +12,7 @@ INPUT_PATH = Path("data/processed/c4_clean.jsonl")
 OUTPUT_PATH = Path("data/distilled/distilled.jsonl")
 
 # Pour le premier test uniquement.
-MAX_DOCUMENTS = 3
+MAX_DOCUMENTS = 10
 
 
 def load_c4_documents(input_path: Path):

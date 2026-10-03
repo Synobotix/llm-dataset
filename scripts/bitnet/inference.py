@@ -17,7 +17,7 @@ from scripts.bitnet.prompt import PROMPT
 # ============================================================
 
 CHECKPOINT_FILE = Path(
-    "checkpoint/optiminisation_bitnet/bitnet_50docs1.pt"
+    "checkpoint/distillation_bitnet/bitnet_distilled_from_scratch.pt"
 )
 
 
@@ -25,9 +25,9 @@ CHECKPOINT_FILE = Path(
 # PARAMÈTRES DE GÉNÉRATION
 # ============================================================
 
-MAX_NEW_TOKENS = 50
+MAX_NEW_TOKENS = 500
 
-TEMPERATURE = 1.0
+TEMPERATURE = 0.7
 
 
 # ============================================================

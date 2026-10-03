@@ -1,3 +1,3 @@
 PROMPT = (
-    "le monde de"
+    "You're a school teacher explain to me what is antiquity"
 )

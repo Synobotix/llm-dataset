@@ -2,21 +2,21 @@ from llm.distillation.openrouter import generate_response
 
 
 TEACHERS = [
-    "deepseek/deepseek-v4.1-flash",
+    # "deepseek/deepseek-v4.1-flash",
+    "nvidia/nemotron-3-ultra-550b-a55b:free",
+    "nvidia/nemotron-3.5-lightning:free",
+    "nvidia/nemotron-3-super-120b-a12b:free",
     
 ]
 """ "deepseek/deepseek-v4-flash-0731",
-    "nvidia/nemotron-3-ultra-550b-a55b:free",
     "deepseek/deepseek-v4-flash",
     "moonshotai/kimi-k3",
     "deepseek/deepseek-v4-pro-0813",
     "deepseek/deepseek-v4-pro",
     "qwen/qwen3.8-flash",
-    "nvidia/nemotron-3.5-lightning:free",
     "qwen/qwen3.7-flash",
     "qwen/qwen3.8-27b",
     "deepseek/deepseek-v3.2",
-    "nvidia/nemotron-3-super-120b-a12b:free",
     "mistralai/mistral-nemo",
     "qwen/qwen3.8-max-0902",
     "moonshotai/kimi-k2.6",
