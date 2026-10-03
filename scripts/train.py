@@ -47,7 +47,7 @@ CHECKPOINT_TO_LOAD = (
 )
 
 CHECKPOINT_TO_SAVE = (
-    "student_v1_100docs.pt"
+    "student_v1_25docs2.pt"
 )
 
 

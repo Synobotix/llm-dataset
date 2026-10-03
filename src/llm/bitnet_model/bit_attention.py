@@ -1,40 +1,25 @@
-import math
-
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from llm.bitnet_model.bitlinear import BitLinear
 
 
 class BitAttention(nn.Module):
     """
-    Multi-Head Self-Attention adaptée à notre architecture BitNet.
+    Multi-Head Self-Attention optimisée pour notre architecture BitNet.
 
-    Les projections Q, K, V et la projection de sortie
-    utilisent BitLinear.
+    Optimisations :
 
-    Architecture :
-
-        X
-        │
-        ├── BitLinear → Q
-        ├── BitLinear → K
-        └── BitLinear → V
-                │
-                ▼
-          Multi-Head Attention
-                │
-                ▼
-            Causal Mask
-                │
-                ▼
-              Softmax
-                │
-                ▼
-               × V
-                │
-                ▼
-          BitLinear Output
+    - projection Q/K/V fusionnée dans une seule BitLinear ;
+    - poids de la projection Q/K/V ternaires via BitLinear ;
+    - activations quantifiées via BitLinear ;
+    - scaled_dot_product_attention de PyTorch ;
+    - causalité native avec is_causal=True ;
+    - pas de masque causal créé manuellement ;
+    - pas de tenseur attention_scores explicite ;
+    - pas de tenseur attention_weights explicite ;
+    - projection de sortie BitLinear.
     """
 
     def __init__(
@@ -55,24 +40,25 @@ class BitAttention(nn.Module):
         self.head_dim = d_model // num_heads
 
         # --------------------------------------------------
-        # Projections Q, K, V
+        # Projection Q / K / V fusionnée
+        # --------------------------------------------------
+        #
+        # Au lieu de :
+        #
+        # X → BitLinear → Q
+        # X → BitLinear → K
+        # X → BitLinear → V
+        #
+        # On fait :
+        #
+        # X → BitLinear → [Q | K | V]
+        #
+        # d_model → 3 × d_model
         # --------------------------------------------------
 
-        self.q_proj = BitLinear(
+        self.qkv_proj = BitLinear(
             in_features=d_model,
-            out_features=d_model,
-            bias=bias,
-        )
-
-        self.k_proj = BitLinear(
-            in_features=d_model,
-            out_features=d_model,
-            bias=bias,
-        )
-
-        self.v_proj = BitLinear(
-            in_features=d_model,
-            out_features=d_model,
+            out_features=3 * d_model,
             bias=bias,
         )
 
@@ -86,109 +72,101 @@ class BitAttention(nn.Module):
             bias=bias,
         )
 
-    def split_heads(self, x: torch.Tensor):
+    # ======================================================
+    # QKV → MULTI-HEAD
+    # ======================================================
+
+    def split_heads(
+        self,
+        x: torch.Tensor,
+    ) -> torch.Tensor:
         """
         Transforme :
 
-            [batch, sequence, d_model]
+            [B, S, D]
 
         en :
 
-            [batch, num_heads, sequence, head_dim]
+            [B, H, S, Hd]
         """
 
         batch_size, sequence_length, _ = x.shape
 
-        x = x.view(
-            batch_size,
-            sequence_length,
-            self.num_heads,
-            self.head_dim,
+        return (
+            x.view(
+                batch_size,
+                sequence_length,
+                self.num_heads,
+                self.head_dim,
+            )
+            .transpose(1, 2)
         )
 
-        x = x.transpose(1, 2)
+    # ======================================================
+    # MULTI-HEAD → D_MODEL
+    # ======================================================
 
-        return x
-
-    def merge_heads(self, x: torch.Tensor):
+    def merge_heads(
+        self,
+        x: torch.Tensor,
+    ) -> torch.Tensor:
         """
         Transforme :
 
-            [batch, num_heads, sequence, head_dim]
+            [B, H, S, Hd]
 
         en :
 
-            [batch, sequence, d_model]
+            [B, S, D]
         """
 
         batch_size, _, sequence_length, _ = x.shape
 
-        x = x.transpose(1, 2)
-
-        x = x.contiguous().view(
-            batch_size,
-            sequence_length,
-            self.d_model,
+        return (
+            x.transpose(1, 2)
+            .contiguous()
+            .view(
+                batch_size,
+                sequence_length,
+                self.d_model,
+            )
         )
 
-        return x
+    # ======================================================
+    # FORWARD
+    # ======================================================
 
-    def create_causal_mask(
+    def forward(
         self,
-        sequence_length: int,
-        device: torch.device,
-    ):
+        x: torch.Tensor,
+    ) -> torch.Tensor:
         """
-        Crée le masque causal.
-
-        Exemple pour 4 tokens :
-
-            0  -∞ -∞ -∞
-            0   0  -∞ -∞
-            0   0   0  -∞
-            0   0   0   0
-
-        Un token ne peut donc pas regarder
-        les tokens situés après lui.
-        """
-
-        mask = torch.triu(
-            torch.ones(
-                sequence_length,
-                sequence_length,
-                device=device,
-                dtype=torch.bool,
-            ),
-            diagonal=1,
-        )
-
-        return mask
-
-    def forward(self, x: torch.Tensor):
-        """
-        Forward de l'attention.
-
         Entrée :
 
-            [batch, sequence, d_model]
+            [B, S, D]
 
         Sortie :
 
-            [batch, sequence, d_model]
+            [B, S, D]
         """
 
-        batch_size, sequence_length, _ = x.shape
-
         # --------------------------------------------------
-        # 1. Projections Q, K, V
+        # 1. Projection Q / K / V fusionnée
         # --------------------------------------------------
 
-        q = self.q_proj(x)
-        k = self.k_proj(x)
-        v = self.v_proj(x)
+        qkv = self.qkv_proj(x)
 
         # --------------------------------------------------
-        # 2. Séparation des têtes
+        # 2. Séparation Q / K / V
+        # --------------------------------------------------
+
+        q, k, v = qkv.chunk(
+            3,
+            dim=-1,
+        )
+
+        # --------------------------------------------------
+        # 3. Séparation des têtes
         # --------------------------------------------------
 
         q = self.split_heads(q)
@@ -196,57 +174,20 @@ class BitAttention(nn.Module):
         v = self.split_heads(v)
 
         # --------------------------------------------------
-        # 3. Produit Q × Kᵀ
+        # 4. Scaled Dot-Product Attention
         # --------------------------------------------------
 
-        attention_scores = torch.matmul(
+        attention_output = F.scaled_dot_product_attention(
             q,
-            k.transpose(-2, -1),
-        )
-
-        # --------------------------------------------------
-        # 4. Scaling
-        # --------------------------------------------------
-
-        attention_scores = (
-            attention_scores
-            / math.sqrt(self.head_dim)
-        )
-
-        # --------------------------------------------------
-        # 5. Causal Mask
-        # --------------------------------------------------
-
-        causal_mask = self.create_causal_mask(
-            sequence_length=sequence_length,
-            device=x.device,
-        )
-
-        attention_scores = attention_scores.masked_fill(
-            causal_mask,
-            float("-inf"),
-        )
-
-        # --------------------------------------------------
-        # 6. Softmax
-        # --------------------------------------------------
-
-        attention_weights = torch.softmax(
-            attention_scores,
-            dim=-1,
-        )
-
-        # --------------------------------------------------
-        # 7. Attention × V
-        # --------------------------------------------------
-
-        attention_output = torch.matmul(
-            attention_weights,
+            k,
             v,
+            attn_mask=None,
+            dropout_p=0.0,
+            is_causal=True,
         )
 
         # --------------------------------------------------
-        # 8. Fusion des têtes
+        # 5. Fusion des têtes
         # --------------------------------------------------
 
         attention_output = self.merge_heads(
@@ -254,11 +195,9 @@ class BitAttention(nn.Module):
         )
 
         # --------------------------------------------------
-        # 9. Projection finale BitLinear
+        # 6. Projection de sortie BitLinear
         # --------------------------------------------------
 
-        output = self.out_proj(
+        return self.out_proj(
             attention_output
         )
-
-        return output

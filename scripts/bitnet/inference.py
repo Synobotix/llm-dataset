@@ -17,7 +17,7 @@ from scripts.bitnet.prompt import PROMPT
 # ============================================================
 
 CHECKPOINT_FILE = Path(
-    "checkpoint/bitnet/bitnet_100docs.pt"
+    "checkpoint/optiminisation_bitnet/bitnet_50docs1.pt"
 )
 
 

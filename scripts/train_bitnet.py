@@ -35,16 +35,15 @@ from llm.bitnet_model.lm_head import LMHead
 # ------------------------------------------------------------
 
 PREVIOUS_CHECKPOINT = Path(
-    "checkpoint/bitnet/bitnet_25docs_continued.pt"
+    "checkpoint/optiminisation_bitnet/bitnet_50docs1.pt"
 )
-
 
 # ------------------------------------------------------------
 # Nouveau checkpoint qui sera créé après le nouvel entraînement
 # ------------------------------------------------------------
 
 NEW_CHECKPOINT = Path(
-    "checkpoint/bitnet/bitnet_100docs.pt"
+    "checkpoint/optiminisation_bitnet/bitnet_200docs1.pt"
 )
 
 
@@ -979,12 +978,24 @@ def main():
     # LOAD PREVIOUS CHECKPOINT
     # ========================================================
 
-    previous_epoch = load_checkpoint(
-        transformer=transformer,
-        lm_head=lm_head,
-        optimizer=optimizer,
-        vocab_size=vocab_size,
-    )
+
+
+    if PREVIOUS_CHECKPOINT is not None:
+
+        previous_epoch = load_checkpoint(
+            transformer=transformer,
+            lm_head=lm_head,
+            optimizer=optimizer,
+            vocab_size=vocab_size,
+        )
+
+    else:
+
+        previous_epoch = 0
+
+        print(
+            "\nEntraînement à partir de zéro."
+        )
 
     # ========================================================
     # CONFIGURATION

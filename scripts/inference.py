@@ -21,7 +21,7 @@ MAX_SEQUENCE_LENGTH = 128
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 CHECKPOINT_PATH = Path(
-    "checkpoints/student_v1/student_v1_100docs.pt"
+    "checkpoints/student_v1/student_v1_25docs.pt"
 )
 
 MAX_NEW_TOKENS = 50
