@@ -15,7 +15,7 @@ from pathlib import Path
 #
 #     MAX_DOCUMENT = 100
 #
-MAX_DOCUMENT = 100
+MAX_DOCUMENT = 25
 
 # Proportion du dataset utilisée pour l'entraînement.
 TRAIN_RATIO = 0.80
@@ -84,7 +84,7 @@ MAX_SEQUENCE_LENGTH = BLOCK_SIZE
 
 BATCH_SIZE = 2
 
-EPOCHS = 15
+EPOCHS = 8
 
 LEARNING_RATE = 1e-3
 

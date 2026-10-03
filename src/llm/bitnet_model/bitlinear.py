@@ -5,37 +5,50 @@ import torch.nn.functional as F
 
 class BitLinear(nn.Module):
     """
-    Couche linéaire adaptée à une architecture BitNet.
+    BitLinear inspiré de BitNet b1.58.
 
-    Les poids entraînables restent en précision flottante.
-    Lors du forward, ils sont quantifiés en {-1, 0, +1}.
+    Principe :
 
-    Schéma :
+        Poids maître FP32
+              │
+              ▼
+        RoundClip
+              │
+              ▼
+        {-1, 0, +1} × scale
+              │
+              ▼
+             STE
+              │
+              ▼
+           calcul
 
-    
-        X
-        │
-        ├── quantification des activations
-        │
-        ▼
-        X_q
-        │
-        │        W_float
-        │           │
-        │           ▼
-        │      quantification
-        │           │
-        │           ▼
-        │      W_ternary
-        │
-        └───────────┬───────────
-                    │
-                    ▼
-               Linear
-                    │
-                    ▼
-                  Y
+    Les activations sont quantifiées en 8 bits.
+
+    Optimisations :
+
+    - poids maître conservés en FP32 pour l'entraînement ;
+    - ternarisation par RoundClip ;
+    - STE pour les poids et activations ;
+    - quantification activation absmax ;
+    - buffer ternaire INT8 pour l'inférence ;
+    - préparation des poids ternaires une seule fois
+      pour l'inférence ;
+    - réduction des opérations inutiles ;
+    - compatible avec F.linear().
+
+    IMPORTANT :
+
+    Cette implémentation reste une version PyTorch
+    de référence.
+
+    F.linear() n'utilise pas encore un kernel matériel
+    spécialisé INT8 × ternaire.
     """
+
+    ACTIVATION_BITS = 8
+    ACTIVATION_QMAX = 128
+    MIN_SCALE = 1e-5
 
     def __init__(
         self,
@@ -48,205 +61,362 @@ class BitLinear(nn.Module):
         self.in_features = in_features
         self.out_features = out_features
 
-        # Poids flottants entraînables.
-        #
-        # Ils ne sont PAS directement utilisés comme poids
-        # pendant le calcul BitNet.
-        #
-        # Ils servent de "poids latents" à partir desquels
-        # nous construisons les poids ternaires.
+        # ==================================================
+        # POIDS MAÎTRE FP32
+        # ==================================================
+
         self.weight = nn.Parameter(
-            torch.empty(out_features, in_features)
+            torch.empty(
+                out_features,
+                in_features,
+                dtype=torch.float32,
+            )
         )
 
+        # ==================================================
+        # BIAS
+        # ==================================================
+
         if bias:
+
             self.bias = nn.Parameter(
-                torch.zeros(out_features)
+                torch.zeros(
+                    out_features,
+                    dtype=torch.float32,
+                )
             )
+
         else:
-            self.register_parameter("bias", None)
+
+            self.register_parameter(
+                "bias",
+                None,
+            )
 
         self.reset_parameters()
 
+        # ==================================================
+        # BUFFER POIDS TERNAIRES
+        # ==================================================
+
+        self.register_buffer(
+            "weight_ternary",
+            torch.empty(
+                0,
+                dtype=torch.int8,
+            ),
+            persistent=False,
+        )
+
+        # ==================================================
+        # SCALE POIDS
+        # ==================================================
+
+        self.register_buffer(
+            "weight_scale",
+            torch.tensor(
+                1.0,
+                dtype=torch.float32,
+            ),
+            persistent=False,
+        )
+
+    # ======================================================
+    # INITIALISATION
+    # ======================================================
+
     def reset_parameters(self):
-        """
-        Initialisation des poids.
-        """
 
         nn.init.kaiming_uniform_(
             self.weight,
-            a=5 ** 0.5
+            a=5 ** 0.5,
         )
 
         if self.bias is not None:
-            nn.init.zeros_(self.bias)
 
-    @staticmethod
-    def quantize_weights(weight: torch.Tensor):
+            nn.init.zeros_(
+                self.bias
+            )
+
+    # ======================================================
+    # QUANTIFICATION DES POIDS
+    # ======================================================
+
+    @classmethod
+    def quantize_weights(
+        cls,
+        weight: torch.Tensor,
+    ):
         """
-        Quantification des poids flottants vers {-1, 0, +1}.
+        Quantification :
 
-        On calcule d'abord une échelle basée sur
-        la moyenne de la valeur absolue des poids.
+            scale = mean(abs(weight))
 
-        Puis :
+            weight / scale
+                ↓
+             round
+                ↓
+            clamp(-1,1)
 
-            poids > 0  -> +1
-            poids < 0  -> -1
+        Résultat :
 
-        avec une zone proche de zéro qui devient 0.
-
-        La valeur retournée est :
-
-            scale * poids_ternaires
+            {-1, 0, +1} × scale
         """
 
-        # Moyenne de la valeur absolue des poids.
-        scale = weight.abs().mean()
-
-        # Protection contre le cas où scale == 0.
-        scale = torch.clamp(
-            scale,
-            min=1e-5
-        )
-
-        # Normalisation.
-        normalized_weight = weight / scale
-
-        # Quantification.
-        #
-        # Les valeurs proches de zéro deviennent 0.
-        # Les autres deviennent -1 ou +1.
-        quantized_weight = torch.where(
-            normalized_weight > 0.5,
-            torch.ones_like(normalized_weight),
-            torch.where(
-                normalized_weight < -0.5,
-                -torch.ones_like(normalized_weight),
-                torch.zeros_like(normalized_weight)
+        scale = (
+            weight.abs()
+            .mean()
+            .clamp(
+                min=cls.MIN_SCALE
             )
         )
 
-        # On conserve l'échelle.
-        quantized_weight = quantized_weight * scale
-
-        return quantized_weight
-
-    @staticmethod
-    def quantize_activations(x: torch.Tensor):
-        """
-        Quantification simple des activations.
-
-        Pour cette première implémentation pédagogique,
-        nous utilisons une quantification symétrique.
-
-        Les activations sont normalisées par leur maximum
-        absolu puis quantifiées sur une plage entière.
-
-        Le nombre de niveaux est volontairement paramétrable.
-        """
-
-        # Valeur maximale absolue.
-        scale = x.abs().amax(
-            dim=-1,
-            keepdim=True
+        weight_scaled = (
+            weight / scale
         )
 
-        # Protection contre division par zéro.
-        scale = torch.clamp(
+        weight_ternary = torch.clamp(
+            torch.round(
+                weight_scaled
+            ),
+            -1,
+            1,
+        )
+
+        weight_quantized = (
+            weight_ternary
+            * scale
+        )
+
+        return (
+            weight_quantized,
             scale,
-            min=1e-5
         )
 
-        # Normalisation.
-        x_normalized = x / scale
+    # ======================================================
+    # QUANTIFICATION DES ACTIVATIONS
+    # ======================================================
 
-        # Quantification sur 8 bits signés.
-        qmax = 127
+    @classmethod
+    def quantize_activations(
+        cls,
+        x: torch.Tensor,
+        bits: int = ACTIVATION_BITS,
+    ):
+        """
+        Quantification absmax des activations.
+
+        Pour 8 bits :
+
+            [-127, +127]
+
+        Les valeurs sont ensuite déquantifiées
+        en FP32 pour F.linear().
+        """
+
+        if bits == 8:
+
+            qmax = cls.ACTIVATION_QMAX
+
+        else:
+
+            qmax = 2 ** (
+                bits - 1
+            )
+
+        # --------------------------------------------------
+        # ABSMAX
+        # --------------------------------------------------
+
+        scale = (
+            x.abs()
+            .max()
+            .clamp(
+                min=cls.MIN_SCALE
+            )
+        )
+
+        # --------------------------------------------------
+        # MISE À L'ÉCHELLE
+        # --------------------------------------------------
+
+        x_scaled = (
+            x
+            * qmax
+            / scale
+        )
+
+        # --------------------------------------------------
+        # CLIPPING
+        # --------------------------------------------------
+
+        x_clipped = torch.clamp(
+            x_scaled,
+            -qmax + 1,
+            qmax - 1,
+        )
+
+        # --------------------------------------------------
+        # ARRONDI
+        # --------------------------------------------------
 
         x_quantized = torch.round(
-            x_normalized * qmax
+            x_clipped
         )
 
-        x_quantized = torch.clamp(
-            x_quantized,
-            -qmax,
-            qmax
-        )
+        # --------------------------------------------------
+        # DÉQUANTIFICATION
+        # --------------------------------------------------
 
-        # Retour vers l'échelle originale.
-        x_quantized = (
-            x_quantized / qmax
+        x_dequantized = (
+            x_quantized
+            / qmax
         ) * scale
 
-        return x_quantized
+        return x_dequantized
+
+    # ======================================================
+    # STE
+    # ======================================================
 
     @staticmethod
-    def straight_through_estimator(
+    def ste(
         original: torch.Tensor,
         quantized: torch.Tensor,
     ):
         """
-        Straight-Through Estimator (STE).
+        Straight-Through Estimator.
 
         Forward :
-            utilise la valeur quantifiée.
+            utilise quantized
 
         Backward :
-            laisse approximativement passer le gradient
-            comme si la quantification n'existait pas.
-
-        Formule :
-
-            original + (quantized - original).detach()
+            gradient de original
         """
 
         return (
             original
-            + (quantized - original).detach()
+            + (
+                quantized
+                - original
+            ).detach()
         )
 
-    def forward(self, x: torch.Tensor):
+    # ======================================================
+    # PRÉPARATION INFÉRENCE
+    # ======================================================
+
+    @torch.no_grad()
+    def prepare_for_inference(self):
         """
-        Forward de BitLinear.
+        Prépare les poids ternaires pour l'inférence.
+
+        Le poids est stocké sous forme :
+
+            INT8 {-1, 0, +1}
+
+        avec un scale séparé.
         """
 
-        # --------------------------------------------------
-        # 1. Quantification des activations
-        # --------------------------------------------------
-
-        x_quantized = self.quantize_activations(x)
-
-        # --------------------------------------------------
-        # 2. Quantification des poids
-        # --------------------------------------------------
-
-        weight_quantized = self.quantize_weights(
-            self.weight
+        weight_quantized, scale = (
+            self.quantize_weights(
+                self.weight
+            )
         )
 
-        # --------------------------------------------------
-        # 3. STE
-        # --------------------------------------------------
+        self.weight_ternary = (
+            torch.round(
+                weight_quantized
+                / scale
+            )
+            .clamp(
+                -1,
+                1,
+            )
+            .to(torch.int8)
+        )
 
-        x_quantized = self.straight_through_estimator(
+        self.weight_scale = (
+            scale.detach()
+        )
+
+    # ======================================================
+    # FORWARD
+    # ======================================================
+
+    def forward(
+        self,
+        x: torch.Tensor,
+    ):
+
+        # ==================================================
+        # ENTRAÎNEMENT
+        # ==================================================
+
+        if self.training:
+
+            weight_quantized, _ = (
+                self.quantize_weights(
+                    self.weight
+                )
+            )
+
+            # --------------------------------------------------
+            # STE POIDS
+            # --------------------------------------------------
+
+            weight_used = self.ste(
+                self.weight,
+                weight_quantized,
+            )
+
+        # ==================================================
+        # INFÉRENCE
+        # ==================================================
+
+        else:
+
+            if (
+                self.weight_ternary.numel()
+                == 0
+            ):
+
+                self.prepare_for_inference()
+
+            weight_used = (
+                self.weight_ternary.to(
+                    dtype=x.dtype
+                )
+                * self.weight_scale.to(
+                    dtype=x.dtype
+                )
+            )
+
+        # ==================================================
+        # QUANTIFICATION ACTIVATIONS
+        # ==================================================
+
+        x_quantized = (
+            self.quantize_activations(
+                x
+            )
+        )
+
+        # ==================================================
+        # STE ACTIVATIONS
+        # ==================================================
+
+        x_used = self.ste(
             x,
-            x_quantized
-        )
-
-        weight_quantized = self.straight_through_estimator(
-            self.weight,
-            weight_quantized
-        )
-
-        # --------------------------------------------------
-        # 4. Calcul linéaire
-        # --------------------------------------------------
-
-        output = F.linear(
             x_quantized,
-            weight_quantized,
-            self.bias
         )
 
-        return output
+        # ==================================================
+        # LINEAR
+        # ==================================================
+
+        return F.linear(
+            x_used,
+            weight_used,
+            self.bias,
+        )
