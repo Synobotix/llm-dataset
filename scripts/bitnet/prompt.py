@@ -1,3 +1,0 @@
-PROMPT = (
-    "le monde de"
-)

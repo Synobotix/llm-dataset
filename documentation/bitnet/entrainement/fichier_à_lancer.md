@@ -20,7 +20,7 @@ poetry run python scripts/tokenize_dataset.py
 # 5. Entraînement BitNet
 Mais avant il faut changer le checkpoint de poursuite d'entrainement
 
-poetry run python scripts/train_bitnet.py
+poetry run python scripts/bitnet/train_bitnet.py
 
 # 6. Test prompt
 Mais avant il faut charger le dernier checkpoint et personnalisé le prompt scripts/bitnet/prompt.py

@@ -1,3 +1,13 @@
+import sys
+from pathlib import Path
+
+
+# Ajouter la racine du projet au PYTHONPATH
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 import math
 from pathlib import Path
 
@@ -25,25 +35,17 @@ from llm.data.dataloader import create_validation_dataloader
 from llm.bitnet_model.bit_transformer import BitTransformer
 from llm.bitnet_model.lm_head import LMHead
 
+from scripts.duration import TrainingTimer
+
 
 # ============================================================
 # CHECKPOINTS
 # ============================================================
 
-# ------------------------------------------------------------
-# Checkpoint précédent à partir duquel reprendre l'entraînement
-# ------------------------------------------------------------
-
-PREVIOUS_CHECKPOINT = Path(
-    "checkpoint/optiminisation_bitnet/bitnet_50docs1.pt"
-)
-
-# ------------------------------------------------------------
-# Nouveau checkpoint qui sera créé après le nouvel entraînement
-# ------------------------------------------------------------
+PREVIOUS_CHECKPOINT = None
 
 NEW_CHECKPOINT = Path(
-    "checkpoint/optiminisation_bitnet/bitnet_200docs1.pt"
+    "checkpoints/bitnet/bitnet_train1.pt"
 )
 
 
@@ -303,10 +305,6 @@ def load_checkpoint(
         map_location=DEVICE,
     )
 
-    # --------------------------------------------------------
-    # Vérification de la configuration
-    # --------------------------------------------------------
-
     if "config" not in checkpoint:
         raise ValueError(
             "Le checkpoint ne contient pas de configuration."
@@ -383,29 +381,17 @@ def load_checkpoint(
             f"Actuel     : {MAX_SEQUENCE_LENGTH}"
         )
 
-    # --------------------------------------------------------
-    # Chargement Transformer
-    # --------------------------------------------------------
-
     transformer.load_state_dict(
         checkpoint[
             "transformer_state_dict"
         ]
     )
 
-    # --------------------------------------------------------
-    # Chargement LM Head
-    # --------------------------------------------------------
-
     lm_head.load_state_dict(
         checkpoint[
             "lm_head_state_dict"
         ]
     )
-
-    # --------------------------------------------------------
-    # Chargement optimizer
-    # --------------------------------------------------------
 
     optimizer.load_state_dict(
         checkpoint[
@@ -493,25 +479,13 @@ def train_one_epoch(
 
         optimizer.zero_grad()
 
-        # ----------------------------------------------------
-        # TRANSFORMER
-        # ----------------------------------------------------
-
         hidden_states = transformer(
             input_ids
         )
 
-        # ----------------------------------------------------
-        # LM HEAD
-        # ----------------------------------------------------
-
         logits = lm_head(
             hidden_states
         )
-
-        # ----------------------------------------------------
-        # RESHAPE
-        # ----------------------------------------------------
 
         batch_size = logits.size(0)
         sequence_length = logits.size(1)
@@ -526,24 +500,12 @@ def train_one_epoch(
             batch_size * sequence_length
         )
 
-        # ----------------------------------------------------
-        # LOSS
-        # ----------------------------------------------------
-
         loss = criterion(
             logits,
             labels,
         )
 
-        # ----------------------------------------------------
-        # BACKPROPAGATION
-        # ----------------------------------------------------
-
         loss.backward()
-
-        # ----------------------------------------------------
-        # GRADIENT NORM
-        # ----------------------------------------------------
 
         transformer_gradient_norm = (
             calculate_gradient_norm(
@@ -562,25 +524,13 @@ def train_one_epoch(
             + lm_head_gradient_norm ** 2
         ) ** 0.5
 
-        # ----------------------------------------------------
-        # GRADIENT CLIPPING
-        # ----------------------------------------------------
-
         torch.nn.utils.clip_grad_norm_(
             list(transformer.parameters())
             + list(lm_head.parameters()),
             GRADIENT_CLIP,
         )
 
-        # ----------------------------------------------------
-        # OPTIMIZER
-        # ----------------------------------------------------
-
         optimizer.step()
-
-        # ----------------------------------------------------
-        # STATISTICS
-        # ----------------------------------------------------
 
         number_of_tokens = (
             batch_size * sequence_length
@@ -647,25 +597,13 @@ def validate(
             DEVICE
         )
 
-        # ----------------------------------------------------
-        # TRANSFORMER
-        # ----------------------------------------------------
-
         hidden_states = transformer(
             input_ids
         )
 
-        # ----------------------------------------------------
-        # LM HEAD
-        # ----------------------------------------------------
-
         logits = lm_head(
             hidden_states
         )
-
-        # ----------------------------------------------------
-        # RESHAPE
-        # ----------------------------------------------------
 
         batch_size = logits.size(0)
         sequence_length = logits.size(1)
@@ -679,10 +617,6 @@ def validate(
         labels = labels.reshape(
             batch_size * sequence_length
         )
-
-        # ----------------------------------------------------
-        # LOSS
-        # ----------------------------------------------------
 
         loss = criterion(
             logits,
@@ -978,8 +912,6 @@ def main():
     # LOAD PREVIOUS CHECKPOINT
     # ========================================================
 
-
-
     if PREVIOUS_CHECKPOINT is not None:
 
         previous_epoch = load_checkpoint(
@@ -1091,6 +1023,18 @@ def main():
         f"{EPOCHS}"
     )
 
+    # ========================================================
+    # CHRONOMÉTRAGE
+    # ========================================================
+
+    print("\n" + "=" * 70)
+    print("CHRONOMÉTRAGE DE L'ENTRAÎNEMENT")
+    print("=" * 70)
+
+    training_timer = TrainingTimer()
+
+    training_timer.start()
+
     for local_epoch in range(
         1,
         EPOCHS + 1,
@@ -1186,6 +1130,26 @@ def main():
             gradient_norm=gradient_norm,
             vocab_size=vocab_size,
         )
+
+    training_duration = training_timer.stop()
+
+    # ========================================================
+    # DURÉE TOTALE
+    # ========================================================
+
+    print("\n" + "=" * 70)
+    print("DURÉE TOTALE DE L'ENTRAÎNEMENT")
+    print("=" * 70)
+
+    print(
+        f"\nDurée totale de l'entraînement : "
+        f"{training_timer.format_duration(training_duration)}"
+    )
+
+    print(
+        f"Durée totale en secondes : "
+        f"{training_duration:.2f}s"
+    )
 
     # ========================================================
     # FIN

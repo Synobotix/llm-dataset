@@ -1,4 +1,5 @@
 from pathlib import Path
+from scripts.duration import TrainingTimer
 
 import torch
 
@@ -9,7 +10,7 @@ from llm.inference.generate_bitnet import (
     generate,
 )
 
-from scripts.bitnet.prompt import PROMPT
+from scripts.prompt import PROMPT
 
 
 # ============================================================
@@ -243,6 +244,11 @@ def main():
         "-" * 60
     )
 
+    timer = TrainingTimer()
+
+    timer.start()
+
+    # génération
     generated_text = generate(
         transformer=transformer,
         lm_head=lm_head,
@@ -252,6 +258,15 @@ def main():
         max_new_tokens=MAX_NEW_TOKENS,
         temperature=TEMPERATURE,
     )
+
+    duration = timer.stop()
+
+    print(
+        f"Durée de l'inférence : "
+        f"{timer.format_duration(duration)}"
+    )
+
+    
 
     # ========================================================
     # RÉSULTAT
