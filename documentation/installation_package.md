@@ -7,4 +7,4 @@
 Colab
 
 session
-colab new --gpu L4 --session trainer
+colab new --gpu T4 --session trainer
