@@ -49,6 +49,10 @@ from scripts.bitnet.checkpoint_path_bitnet import (
     get_checkpoint_paths,
 )
 
+from scripts.bitnet.save_result_bitnet import (
+    save_training_result,
+)
+
 
 # ============================================================
 # DEVICE
@@ -293,6 +297,132 @@ def calculate_gradient_norm(model):
         )
 
     return total_norm ** 0.5
+
+
+# ============================================================
+# PARAMÈTRES ENTRAÎNABLES
+# ============================================================
+
+def print_trainable_parameters(model, model_name="MODEL"):
+    """
+    Affiche et retourne les paramètres entraînables du modèle.
+    """
+
+    trainable_parameters = [
+        p
+        for p in model.parameters()
+        if p.requires_grad
+    ]
+
+    frozen_parameters = [
+        p
+        for p in model.parameters()
+        if not p.requires_grad
+    ]
+
+    total_trainable = sum(
+        p.numel() for p in trainable_parameters
+    )
+
+    total_frozen = sum(
+        p.numel() for p in frozen_parameters
+    )
+
+    total_parameters = (
+        total_trainable + total_frozen
+    )
+
+    trainable_ratio = (
+        (total_trainable / total_parameters * 100.0)
+        if total_parameters > 0
+        else 0.0
+    )
+
+    modules_info = []
+
+    for name, module in model.named_children():
+
+        module_total = sum(
+            p.numel() for p in module.parameters()
+        )
+
+        module_trainable = sum(
+            p.numel()
+            for p in module.parameters()
+            if p.requires_grad
+        )
+
+        modules_info.append(
+            {
+                "name": name,
+                "total": module_total,
+                "trainable": module_trainable,
+            }
+        )
+
+    # ---------- Affichage terminal ----------
+
+    print("\n" + "=" * 70)
+
+    print(f"PARAMÈTRES ENTRAÎNABLES — {model_name}")
+
+    print("=" * 70)
+
+    print(
+        f"\nTenseurs entraînables  : "
+        f"{len(trainable_parameters)}"
+    )
+
+    print(
+        f"Tenseurs gelés         : "
+        f"{len(frozen_parameters)}"
+    )
+
+    print(
+        f"\nParamètres entraînables : "
+        f"{total_trainable:,}"
+    )
+
+    print(
+        f"Paramètres gelés        : "
+        f"{total_frozen:,}"
+    )
+
+    print(
+        f"Paramètres totaux       : "
+        f"{total_parameters:,}"
+    )
+
+    if total_parameters > 0:
+
+        print(
+            f"Ratio entraînable       : "
+            f"{trainable_ratio:.4f} %"
+        )
+
+    print("\nDétail par sous-module :")
+
+    print("-" * 70)
+
+    for module in modules_info:
+
+        print(
+            f"  {module['name']:<30} "
+            f"total = {module['total']:>12,}  "
+            f"entraînable = {module['trainable']:>12,}"
+        )
+
+    print("-" * 70)
+
+    return {
+        "trainable_tensors": len(trainable_parameters),
+        "frozen_tensors": len(frozen_parameters),
+        "trainable_parameters": total_trainable,
+        "frozen_parameters": total_frozen,
+        "total_parameters": total_parameters,
+        "trainable_ratio": f"{trainable_ratio:.4f} %",
+        "modules": modules_info,
+    }
 
 
 # ============================================================
@@ -748,6 +878,9 @@ def save_checkpoint(
     validation_loss,
     gradient_norm,
     vocab_size,
+    duration="N/A",
+    duration_seconds="N/A",
+    batch_size="N/A",
 ):
     """
     Sauvegarde le nouveau checkpoint.
@@ -805,6 +938,12 @@ def save_checkpoint(
         "gradient_norm":
             gradient_norm,
 
+        "duration":
+            duration,
+
+        "duration_seconds":
+            duration_seconds,
+
         "config": {
 
             "vocab_size":
@@ -824,6 +963,9 @@ def save_checkpoint(
 
             "max_sequence_length":
                 transformer.max_sequence_length,
+
+            "batch_size":
+                batch_size,
 
             "epochs":
                 EPOCHS,
@@ -1197,6 +1339,16 @@ def main():
     training_timer.start()
 
     # ========================================================
+    # INITIALISATION DES DERNIÈRES MÉTRIQUES
+    # ========================================================
+
+    train_loss = None
+
+    validation_loss = None
+
+    gradient_norm = None
+
+    # ========================================================
     # EPOCHS
     # ========================================================
 
@@ -1287,7 +1439,8 @@ def main():
         )
 
         # ----------------------------------------------------
-        # SAVE
+        # SAVE (dans la boucle — sans durée, elle n'est pas
+        # encore connue)
         # ----------------------------------------------------
 
         save_checkpoint(
@@ -1300,6 +1453,7 @@ def main():
             validation_loss=validation_loss,
             gradient_norm=gradient_norm,
             vocab_size=vocab_size,
+            batch_size=BATCH_SIZE,
         )
 
     # ========================================================
@@ -1330,6 +1484,60 @@ def main():
     print(
         f"Durée totale en secondes : "
         f"{training_duration:.2f}s"
+    )
+
+    # ========================================================
+    # RE-SAVE DU CHECKPOINT AVEC LA DURÉE
+    # ========================================================
+
+    if train_loss is not None:
+
+        save_checkpoint(
+            checkpoint_path=new_checkpoint,
+            transformer=transformer,
+            lm_head=lm_head,
+            optimizer=optimizer,
+            epoch=previous_epoch + EPOCHS,
+            train_loss=train_loss,
+            validation_loss=validation_loss,
+            gradient_norm=gradient_norm,
+            vocab_size=vocab_size,
+            duration=training_timer.format_duration(
+                training_duration
+            ),
+            duration_seconds=training_duration,
+            batch_size=BATCH_SIZE,
+        )
+
+    # ========================================================
+    # PARAMÈTRES ENTRAÎNABLES
+    # ========================================================
+
+    trainable_info = print_trainable_parameters(
+        transformer,
+        model_name="BitTransformer",
+    )
+
+    # ========================================================
+    # RAPPORT MARKDOWN
+    # ========================================================
+
+    gpu_name = (
+        torch.cuda.get_device_name(0)
+        if DEVICE.type == "cuda"
+        else None
+    )
+
+    save_training_result(
+        checkpoint_path=new_checkpoint,
+        trainable_parameters=trainable_info,
+        device=str(DEVICE),
+        gpu_name=gpu_name,
+        duration=training_timer.format_duration(
+            training_duration
+        ),
+        duration_seconds=training_duration,
+        batch_size=BATCH_SIZE,
     )
 
     # ========================================================
