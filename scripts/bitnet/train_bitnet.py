@@ -53,6 +53,10 @@ from scripts.bitnet.save_result_bitnet import (
     save_training_result,
 )
 
+from scripts.bitnet.bitnet_save_training_every import (
+    StepCheckpointSaver,
+)
+
 
 # ============================================================
 # DEVICE
@@ -638,9 +642,15 @@ def train_one_epoch(
     dataloader,
     optimizer,
     criterion,
+    step_saver=None,
+    global_step=0,
+    save_checkpoint_fn=None,
+    save_checkpoint_kwargs=None,
 ):
     """
     Effectue une époque complète d'entraînement.
+
+    Retourne (loss_moyenne, gradient_norm, global_step).
     """
 
     transformer.train()
@@ -749,6 +759,31 @@ def train_one_epoch(
             number_of_tokens
         )
 
+        # ------------------------------------------------
+        # Incrémenter le step global
+        # ------------------------------------------------
+
+        global_step += 1
+
+        # ------------------------------------------------
+        # Sauvegarde périodique
+        # ------------------------------------------------
+
+        if (
+            step_saver is not None
+            and save_checkpoint_fn is not None
+        ):
+
+            step_saver.save(
+                step=global_step,
+                save_checkpoint_fn=save_checkpoint_fn,
+                **(save_checkpoint_kwargs or {}),
+            )
+
+        # ------------------------------------------------
+        # Affichage de la progression
+        # ------------------------------------------------
+
         print(
             f"\rBatch "
             f"{batch_index:>4}/"
@@ -769,6 +804,7 @@ def train_one_epoch(
     return (
         average_loss,
         last_gradient_norm,
+        global_step,
     )
 
 
@@ -1395,6 +1431,17 @@ def main():
     training_timer.start()
 
     # ========================================================
+    # SAUVEGARDE PÉRIODIQUE
+    # ========================================================
+
+    step_saver = StepCheckpointSaver(
+        save_every_n_steps=10_000,
+        enabled=True,
+    )
+
+    step_saver.print_status()
+
+    # ========================================================
     # INITIALISATION DES DERNIÈRES MÉTRIQUES
     # ========================================================
 
@@ -1403,6 +1450,8 @@ def main():
     validation_loss = None
 
     gradient_norm = None
+
+    global_step = 0
 
     # ========================================================
     # EPOCHS
@@ -1436,12 +1485,27 @@ def main():
         (
             train_loss,
             gradient_norm,
+            global_step,
         ) = train_one_epoch(
             transformer=transformer,
             lm_head=lm_head,
             dataloader=train_loader,
             optimizer=optimizer,
             criterion=criterion,
+            step_saver=step_saver,
+            global_step=global_step,
+            save_checkpoint_fn=save_checkpoint,
+            save_checkpoint_kwargs={
+                "transformer": transformer,
+                "lm_head": lm_head,
+                "optimizer": optimizer,
+                "epoch": global_epoch,
+                "train_loss": train_loss if train_loss is not None else 0.0,
+                "validation_loss": validation_loss if validation_loss is not None else 0.0,
+                "gradient_norm": gradient_norm if gradient_norm is not None else 0.0,
+                "vocab_size": vocab_size,
+                "batch_size": BATCH_SIZE,
+            },
         )
 
         # ----------------------------------------------------
