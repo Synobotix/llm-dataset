@@ -8,8 +8,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+
 import math
-from pathlib import Path
 
 import torch
 import torch.nn as nn
@@ -31,30 +31,22 @@ from llm.config.parameters import (
     NUM_BLOCKS,
 )
 
-from llm.data.dataloader import create_validation_dataloader
-from llm.bitnet_model.bit_transformer import BitTransformer
-from llm.bitnet_model.lm_head import LMHead
+from llm.data.dataloader import (
+    create_validation_dataloader,
+)
+
+from llm.bitnet_model.bit_transformer import (
+    BitTransformer,
+)
+
+from llm.bitnet_model.lm_head import (
+    LMHead,
+)
 
 from scripts.duration import TrainingTimer
 
-
-# ============================================================
-# CHECKPOINTS
-# ============================================================
-
-PREVIOUS_CHECKPOINT = None
-
-NEW_CHECKPOINT = Path(
-    "checkpoints/bitnet/bitnet_train1.pt"
-)
-
-
-# ============================================================
-# DATASET
-# ============================================================
-
-TRAIN_DATASET_FILE = Path(
-    "data/tokenized/train.jsonl"
+from scripts.bitnet.checkpoint_path_bitnet import (
+    get_checkpoint_paths,
 )
 
 
@@ -70,6 +62,15 @@ DEVICE = torch.device(
 
 
 # ============================================================
+# DATASET
+# ============================================================
+
+TRAIN_DATASET_FILE = Path(
+    "data/tokenized/train.jsonl"
+)
+
+
+# ============================================================
 # TOKENIZER
 # ============================================================
 
@@ -79,8 +80,10 @@ def load_tokenizer():
     """
 
     if not TOKENIZER_FILE.exists():
+
         raise FileNotFoundError(
-            f"Tokenizer introuvable : {TOKENIZER_FILE}"
+            f"Tokenizer introuvable : "
+            f"{TOKENIZER_FILE}"
         )
 
     tokenizer = Tokenizer.from_file(
@@ -94,7 +97,9 @@ def load_tokenizer():
 # DATASET TRAIN
 # ============================================================
 
-class TokenizedDataset(torch.utils.data.Dataset):
+class TokenizedDataset(
+    torch.utils.data.Dataset
+):
     """
     Dataset PyTorch pour le fichier JSONL tokenisé.
     """
@@ -108,8 +113,10 @@ class TokenizedDataset(torch.utils.data.Dataset):
         self.samples = []
 
         if not file_path.exists():
+
             raise FileNotFoundError(
-                f"Dataset train introuvable : {file_path}"
+                f"Dataset train introuvable : "
+                f"{file_path}"
             )
 
         with file_path.open(
@@ -128,7 +135,10 @@ class TokenizedDataset(torch.utils.data.Dataset):
                     continue
 
                 try:
-                    sample = json.loads(line)
+
+                    sample = json.loads(
+                        line
+                    )
 
                 except json.JSONDecodeError as error:
 
@@ -149,6 +159,7 @@ class TokenizedDataset(torch.utils.data.Dataset):
                     input_ids,
                     list,
                 ):
+
                     raise ValueError(
                         f"input_ids invalide "
                         f"à la ligne {line_number}"
@@ -158,12 +169,14 @@ class TokenizedDataset(torch.utils.data.Dataset):
                     labels,
                     list,
                 ):
+
                     raise ValueError(
                         f"labels invalides "
                         f"à la ligne {line_number}"
                     )
 
                 if len(input_ids) != MAX_SEQUENCE_LENGTH:
+
                     raise ValueError(
                         f"input_ids doit contenir "
                         f"{MAX_SEQUENCE_LENGTH} tokens "
@@ -171,6 +184,7 @@ class TokenizedDataset(torch.utils.data.Dataset):
                     )
 
                 if len(labels) != MAX_SEQUENCE_LENGTH:
+
                     raise ValueError(
                         f"labels doit contenir "
                         f"{MAX_SEQUENCE_LENGTH} tokens "
@@ -185,19 +199,26 @@ class TokenizedDataset(torch.utils.data.Dataset):
                 )
 
     def __len__(self):
-        return len(self.samples)
+
+        return len(
+            self.samples
+        )
 
     def __getitem__(
         self,
         index,
     ):
-        sample = self.samples[index]
+
+        sample = self.samples[
+            index
+        ]
 
         return {
             "input_ids": torch.tensor(
                 sample["input_ids"],
                 dtype=torch.long,
             ),
+
             "labels": torch.tensor(
                 sample["labels"],
                 dtype=torch.long,
@@ -238,9 +259,11 @@ def calculate_perplexity(loss):
     """
 
     try:
+
         return math.exp(loss)
 
     except OverflowError:
+
         return float("inf")
 
 
@@ -261,7 +284,8 @@ def calculate_gradient_norm(model):
             continue
 
         parameter_norm = (
-            parameter.grad.detach().data.norm(2)
+            parameter.grad.detach()
+            .data.norm(2)
         )
 
         total_norm += (
@@ -276,6 +300,7 @@ def calculate_gradient_norm(model):
 # ============================================================
 
 def load_checkpoint(
+    checkpoint_path,
     transformer,
     lm_head,
     optimizer,
@@ -283,6 +308,7 @@ def load_checkpoint(
 ):
     """
     Charge le checkpoint précédent et restaure :
+
     - les poids du Transformer
     - les poids du LM Head
     - l'état de l'optimizer
@@ -290,10 +316,15 @@ def load_checkpoint(
     - les métriques précédentes
     """
 
-    if not PREVIOUS_CHECKPOINT.exists():
+    checkpoint_path = Path(
+        checkpoint_path
+    )
+
+    if not checkpoint_path.exists():
+
         raise FileNotFoundError(
             f"Checkpoint précédent introuvable : "
-            f"{PREVIOUS_CHECKPOINT}"
+            f"{checkpoint_path}"
         )
 
     print(
@@ -301,35 +332,49 @@ def load_checkpoint(
     )
 
     checkpoint = torch.load(
-        PREVIOUS_CHECKPOINT,
+        checkpoint_path,
         map_location=DEVICE,
     )
 
     if "config" not in checkpoint:
+
         raise ValueError(
-            "Le checkpoint ne contient pas de configuration."
+            "Le checkpoint ne contient pas "
+            "de configuration."
         )
 
-    checkpoint_config = checkpoint["config"]
-
-    checkpoint_vocab_size = checkpoint_config.get(
-        "vocab_size"
+    checkpoint_config = (
+        checkpoint["config"]
     )
 
-    checkpoint_d_model = checkpoint_config.get(
-        "d_model"
+    checkpoint_vocab_size = (
+        checkpoint_config.get(
+            "vocab_size"
+        )
     )
 
-    checkpoint_num_heads = checkpoint_config.get(
-        "num_heads"
+    checkpoint_d_model = (
+        checkpoint_config.get(
+            "d_model"
+        )
     )
 
-    checkpoint_hidden_dim = checkpoint_config.get(
-        "hidden_dim"
+    checkpoint_num_heads = (
+        checkpoint_config.get(
+            "num_heads"
+        )
     )
 
-    checkpoint_num_blocks = checkpoint_config.get(
-        "num_blocks"
+    checkpoint_hidden_dim = (
+        checkpoint_config.get(
+            "hidden_dim"
+        )
+    )
+
+    checkpoint_num_blocks = (
+        checkpoint_config.get(
+            "num_blocks"
+        )
     )
 
     checkpoint_max_sequence_length = (
@@ -339,14 +384,16 @@ def load_checkpoint(
     )
 
     if checkpoint_vocab_size != vocab_size:
+
         raise ValueError(
-            "\nLe vocabulaire du checkpoint ne correspond "
-            "pas au tokenizer actuel.\n"
+            "\nLe vocabulaire du checkpoint "
+            "ne correspond pas au tokenizer actuel.\n"
             f"Checkpoint : {checkpoint_vocab_size}\n"
             f"Tokenizer  : {vocab_size}"
         )
 
     if checkpoint_d_model != D_MODEL:
+
         raise ValueError(
             "\nD_MODEL différent du checkpoint.\n"
             f"Checkpoint : {checkpoint_d_model}\n"
@@ -354,6 +401,7 @@ def load_checkpoint(
         )
 
     if checkpoint_num_heads != NUM_HEADS:
+
         raise ValueError(
             "\nNUM_HEADS différent du checkpoint.\n"
             f"Checkpoint : {checkpoint_num_heads}\n"
@@ -361,6 +409,7 @@ def load_checkpoint(
         )
 
     if checkpoint_hidden_dim != HIDDEN_DIM:
+
         raise ValueError(
             "\nHIDDEN_DIM différent du checkpoint.\n"
             f"Checkpoint : {checkpoint_hidden_dim}\n"
@@ -368,17 +417,25 @@ def load_checkpoint(
         )
 
     if checkpoint_num_blocks != NUM_BLOCKS:
+
         raise ValueError(
             "\nNUM_BLOCKS différent du checkpoint.\n"
             f"Checkpoint : {checkpoint_num_blocks}\n"
             f"Actuel     : {NUM_BLOCKS}"
         )
 
-    if checkpoint_max_sequence_length != MAX_SEQUENCE_LENGTH:
+    if (
+        checkpoint_max_sequence_length
+        != MAX_SEQUENCE_LENGTH
+    ):
+
         raise ValueError(
-            "\nMAX_SEQUENCE_LENGTH différent du checkpoint.\n"
-            f"Checkpoint : {checkpoint_max_sequence_length}\n"
-            f"Actuel     : {MAX_SEQUENCE_LENGTH}"
+            "\nMAX_SEQUENCE_LENGTH différent "
+            "du checkpoint.\n"
+            f"Checkpoint : "
+            f"{checkpoint_max_sequence_length}\n"
+            f"Actuel     : "
+            f"{MAX_SEQUENCE_LENGTH}"
         )
 
     transformer.load_state_dict(
@@ -416,7 +473,7 @@ def load_checkpoint(
 
     print(
         f"Checkpoint chargé : "
-        f"{PREVIOUS_CHECKPOINT}"
+        f"{checkpoint_path}"
     )
 
     print(
@@ -457,9 +514,11 @@ def train_one_epoch(
     """
 
     transformer.train()
+
     lm_head.train()
 
     total_loss = 0.0
+
     total_tokens = 0
 
     last_gradient_norm = 0.0
@@ -469,11 +528,15 @@ def train_one_epoch(
         start=1,
     ):
 
-        input_ids = batch["input_ids"].to(
+        input_ids = batch[
+            "input_ids"
+        ].to(
             DEVICE
         )
 
-        labels = batch["labels"].to(
+        labels = batch[
+            "labels"
+        ].to(
             DEVICE
         )
 
@@ -488,16 +551,22 @@ def train_one_epoch(
         )
 
         batch_size = logits.size(0)
-        sequence_length = logits.size(1)
+
+        sequence_length = (
+            logits.size(1)
+        )
+
         vocab_size = logits.size(2)
 
         logits = logits.reshape(
-            batch_size * sequence_length,
+            batch_size
+            * sequence_length,
             vocab_size,
         )
 
         labels = labels.reshape(
-            batch_size * sequence_length
+            batch_size
+            * sequence_length
         )
 
         loss = criterion(
@@ -525,15 +594,20 @@ def train_one_epoch(
         ) ** 0.5
 
         torch.nn.utils.clip_grad_norm_(
-            list(transformer.parameters())
-            + list(lm_head.parameters()),
+            list(
+                transformer.parameters()
+            )
+            + list(
+                lm_head.parameters()
+            ),
             GRADIENT_CLIP,
         )
 
         optimizer.step()
 
         number_of_tokens = (
-            batch_size * sequence_length
+            batch_size
+            * sequence_length
         )
 
         total_loss += (
@@ -541,7 +615,9 @@ def train_one_epoch(
             * number_of_tokens
         )
 
-        total_tokens += number_of_tokens
+        total_tokens += (
+            number_of_tokens
+        )
 
         print(
             f"\rBatch "
@@ -582,18 +658,24 @@ def validate(
     """
 
     transformer.eval()
+
     lm_head.eval()
 
     total_loss = 0.0
+
     total_tokens = 0
 
     for batch in dataloader:
 
-        input_ids = batch["input_ids"].to(
+        input_ids = batch[
+            "input_ids"
+        ].to(
             DEVICE
         )
 
-        labels = batch["labels"].to(
+        labels = batch[
+            "labels"
+        ].to(
             DEVICE
         )
 
@@ -606,16 +688,22 @@ def validate(
         )
 
         batch_size = logits.size(0)
-        sequence_length = logits.size(1)
+
+        sequence_length = (
+            logits.size(1)
+        )
+
         vocab_size = logits.size(2)
 
         logits = logits.reshape(
-            batch_size * sequence_length,
+            batch_size
+            * sequence_length,
             vocab_size,
         )
 
         labels = labels.reshape(
-            batch_size * sequence_length
+            batch_size
+            * sequence_length
         )
 
         loss = criterion(
@@ -624,7 +712,8 @@ def validate(
         )
 
         number_of_tokens = (
-            batch_size * sequence_length
+            batch_size
+            * sequence_length
         )
 
         total_loss += (
@@ -632,7 +721,9 @@ def validate(
             * number_of_tokens
         )
 
-        total_tokens += number_of_tokens
+        total_tokens += (
+            number_of_tokens
+        )
 
     average_loss = (
         total_loss / total_tokens
@@ -648,6 +739,7 @@ def validate(
 # ============================================================
 
 def save_checkpoint(
+    checkpoint_path,
     transformer,
     lm_head,
     optimizer,
@@ -661,7 +753,11 @@ def save_checkpoint(
     Sauvegarde le nouveau checkpoint.
     """
 
-    NEW_CHECKPOINT.parent.mkdir(
+    checkpoint_path = Path(
+        checkpoint_path
+    )
+
+    checkpoint_path.parent.mkdir(
         parents=True,
         exist_ok=True,
     )
@@ -675,7 +771,9 @@ def save_checkpoint(
     )
 
     checkpoint = {
-        "epoch": epoch,
+
+        "epoch":
+            epoch,
 
         "transformer_state_dict":
             transformer.state_dict(),
@@ -708,6 +806,7 @@ def save_checkpoint(
             gradient_norm,
 
         "config": {
+
             "vocab_size":
                 vocab_size,
 
@@ -742,12 +841,12 @@ def save_checkpoint(
 
     torch.save(
         checkpoint,
-        NEW_CHECKPOINT,
+        checkpoint_path,
     )
 
     print(
         f"\nNouveau checkpoint sauvegardé : "
-        f"{NEW_CHECKPOINT}"
+        f"{checkpoint_path}"
     )
 
 
@@ -758,7 +857,11 @@ def save_checkpoint(
 def main():
 
     print("=" * 70)
-    print("ENTRAÎNEMENT BITNET")
+
+    print(
+        "ENTRAÎNEMENT BITNET"
+    )
+
     print("=" * 70)
 
     # ========================================================
@@ -777,6 +880,25 @@ def main():
         )
 
     # ========================================================
+    # CHECKPOINT PATHS
+    # ========================================================
+
+    (
+        previous_checkpoint,
+        new_checkpoint,
+    ) = get_checkpoint_paths()
+
+    print(
+        "\nCheckpoint à charger : "
+        f"{previous_checkpoint}"
+    )
+
+    print(
+        "Checkpoint à sauvegarder : "
+        f"{new_checkpoint}"
+    )
+
+    # ========================================================
     # TOKENIZER
     # ========================================================
 
@@ -786,7 +908,9 @@ def main():
 
     tokenizer = load_tokenizer()
 
-    vocab_size = tokenizer.get_vocab_size()
+    vocab_size = (
+        tokenizer.get_vocab_size()
+    )
 
     print(
         f"Vocabulaire réel : "
@@ -801,7 +925,9 @@ def main():
         "\nCréation des DataLoaders..."
     )
 
-    train_loader = create_train_dataloader()
+    train_loader = (
+        create_train_dataloader()
+    )
 
     validation_loader = (
         create_validation_dataloader()
@@ -842,7 +968,9 @@ def main():
         hidden_dim=HIDDEN_DIM,
         num_blocks=NUM_BLOCKS,
         max_sequence_length=MAX_SEQUENCE_LENGTH,
-    ).to(DEVICE)
+    ).to(
+        DEVICE
+    )
 
     # ========================================================
     # LM HEAD
@@ -855,7 +983,9 @@ def main():
     lm_head = LMHead(
         d_model=D_MODEL,
         vocab_size=vocab_size,
-    ).to(DEVICE)
+    ).to(
+        DEVICE
+    )
 
     # ========================================================
     # PARAMETERS
@@ -896,8 +1026,12 @@ def main():
     # ========================================================
 
     optimizer = AdamW(
-        list(transformer.parameters())
-        + list(lm_head.parameters()),
+        list(
+            transformer.parameters()
+        )
+        + list(
+            lm_head.parameters()
+        ),
         lr=LEARNING_RATE,
         weight_decay=WEIGHT_DECAY,
     )
@@ -912,13 +1046,16 @@ def main():
     # LOAD PREVIOUS CHECKPOINT
     # ========================================================
 
-    if PREVIOUS_CHECKPOINT is not None:
+    if previous_checkpoint is not None:
 
-        previous_epoch = load_checkpoint(
-            transformer=transformer,
-            lm_head=lm_head,
-            optimizer=optimizer,
-            vocab_size=vocab_size,
+        previous_epoch = (
+            load_checkpoint(
+                checkpoint_path=previous_checkpoint,
+                transformer=transformer,
+                lm_head=lm_head,
+                optimizer=optimizer,
+                vocab_size=vocab_size,
+            )
         )
 
     else:
@@ -926,14 +1063,20 @@ def main():
         previous_epoch = 0
 
         print(
-            "\nEntraînement à partir de zéro."
+            "\nAucun checkpoint précédent."
+        )
+
+        print(
+            "Entraînement à partir de zéro."
         )
 
     # ========================================================
     # CONFIGURATION
     # ========================================================
 
-    print("\nConfiguration :")
+    print(
+        "\nConfiguration :"
+    )
 
     print(
         f"  Documents           = "
@@ -997,21 +1140,29 @@ def main():
 
     print(
         f"  Ancien checkpoint   = "
-        f"{PREVIOUS_CHECKPOINT}"
+        f"{previous_checkpoint}"
     )
 
     print(
         f"  Nouveau checkpoint  = "
-        f"{NEW_CHECKPOINT}"
+        f"{new_checkpoint}"
     )
 
     # ========================================================
     # TRAINING
     # ========================================================
 
-    print("\n" + "=" * 70)
-    print("REPRISE DE L'ENTRAÎNEMENT")
-    print("=" * 70)
+    print(
+        "\n" + "=" * 70
+    )
+
+    print(
+        "REPRISE DE L'ENTRAÎNEMENT"
+    )
+
+    print(
+        "=" * 70
+    )
 
     print(
         f"\nReprise après l'époque "
@@ -1027,13 +1178,27 @@ def main():
     # CHRONOMÉTRAGE
     # ========================================================
 
-    print("\n" + "=" * 70)
-    print("CHRONOMÉTRAGE DE L'ENTRAÎNEMENT")
-    print("=" * 70)
+    print(
+        "\n" + "=" * 70
+    )
 
-    training_timer = TrainingTimer()
+    print(
+        "CHRONOMÉTRAGE DE L'ENTRAÎNEMENT"
+    )
+
+    print(
+        "=" * 70
+    )
+
+    training_timer = (
+        TrainingTimer()
+    )
 
     training_timer.start()
+
+    # ========================================================
+    # EPOCHS
+    # ========================================================
 
     for local_epoch in range(
         1,
@@ -1052,20 +1217,23 @@ def main():
             f"{local_epoch}/{EPOCHS})"
         )
 
-        print("-" * 70)
+        print(
+            "-" * 70
+        )
 
         # ----------------------------------------------------
         # TRAIN
         # ----------------------------------------------------
 
-        train_loss, gradient_norm = (
-            train_one_epoch(
-                transformer=transformer,
-                lm_head=lm_head,
-                dataloader=train_loader,
-                optimizer=optimizer,
-                criterion=criterion,
-            )
+        (
+            train_loss,
+            gradient_norm,
+        ) = train_one_epoch(
+            transformer=transformer,
+            lm_head=lm_head,
+            dataloader=train_loader,
+            optimizer=optimizer,
+            criterion=criterion,
         )
 
         # ----------------------------------------------------
@@ -1087,8 +1255,10 @@ def main():
             train_loss
         )
 
-        validation_ppl = calculate_perplexity(
-            validation_loss
+        validation_ppl = (
+            calculate_perplexity(
+                validation_loss
+            )
         )
 
         print(
@@ -1121,6 +1291,7 @@ def main():
         # ----------------------------------------------------
 
         save_checkpoint(
+            checkpoint_path=new_checkpoint,
             transformer=transformer,
             lm_head=lm_head,
             optimizer=optimizer,
@@ -1131,15 +1302,25 @@ def main():
             vocab_size=vocab_size,
         )
 
-    training_duration = training_timer.stop()
-
     # ========================================================
-    # DURÉE TOTALE
+    # DURÉE
     # ========================================================
 
-    print("\n" + "=" * 70)
-    print("DURÉE TOTALE DE L'ENTRAÎNEMENT")
-    print("=" * 70)
+    training_duration = (
+        training_timer.stop()
+    )
+
+    print(
+        "\n" + "=" * 70
+    )
+
+    print(
+        "DURÉE TOTALE DE L'ENTRAÎNEMENT"
+    )
+
+    print(
+        "=" * 70
+    )
 
     print(
         f"\nDurée totale de l'entraînement : "
@@ -1155,9 +1336,17 @@ def main():
     # FIN
     # ========================================================
 
-    print("\n" + "=" * 70)
-    print("POURSUITE DE L'ENTRAÎNEMENT TERMINÉE")
-    print("=" * 70)
+    print(
+        "\n" + "=" * 70
+    )
+
+    print(
+        "POURSUITE DE L'ENTRAÎNEMENT TERMINÉE"
+    )
+
+    print(
+        "=" * 70
+    )
 
     print(
         f"\nDernière époque : "
@@ -1166,14 +1355,15 @@ def main():
 
     print(
         f"Ancien checkpoint : "
-        f"{PREVIOUS_CHECKPOINT}"
+        f"{previous_checkpoint}"
     )
 
     print(
         f"Nouveau checkpoint : "
-        f"{NEW_CHECKPOINT}"
+        f"{new_checkpoint}"
     )
 
 
 if __name__ == "__main__":
+
     main()

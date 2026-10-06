@@ -33,6 +33,14 @@ from llm.config.parameters import (
 
 from scripts.duration import TrainingTimer
 
+from scripts.gpt_classic.checkpoint_path_gpt_classic import (
+    get_checkpoint_paths,
+)
+
+from scripts.gpt_classic.save_result_gpt_classic import (
+    save_training_result,
+)
+
 from llm.data.dataloader import (
     create_train_dataloader,
     create_validation_dataloader,
@@ -51,21 +59,6 @@ DEVICE = torch.device(
     "cuda"
     if torch.cuda.is_available()
     else "cpu"
-)
-
-
-# ============================================================
-# CHECKPOINT
-# ============================================================
-
-CHECKPOINT_TO_LOAD = None
-
-CHECKPOINT_TO_SAVE = (
-    "test1.pt"
-)
-
-CHECKPOINT_DIRECTORY = Path(
-    "checkpoints/gpt_classic"
 )
 
 
@@ -147,6 +140,137 @@ def count_parameters(model):
 
 
 # ============================================================
+# PARAMÈTRES ENTRAÎNABLES
+# ============================================================
+
+def print_trainable_parameters(model):
+
+    trainable_parameters = [
+        p
+        for p in model.parameters()
+        if p.requires_grad
+    ]
+
+    frozen_parameters = [
+        p
+        for p in model.parameters()
+        if not p.requires_grad
+    ]
+
+    total_trainable = sum(
+        p.numel() for p in trainable_parameters
+    )
+
+    total_frozen = sum(
+        p.numel() for p in frozen_parameters
+    )
+
+    total_parameters = (
+        total_trainable + total_frozen
+    )
+
+    trainable_ratio = (
+        (total_trainable / total_parameters * 100.0)
+        if total_parameters > 0
+        else 0.0
+    )
+
+    modules_info = []
+
+    for name, module in model.named_children():
+
+        module_total = sum(
+            p.numel() for p in module.parameters()
+        )
+
+        module_trainable = sum(
+            p.numel()
+            for p in module.parameters()
+            if p.requires_grad
+        )
+
+        modules_info.append(
+            {
+                "name": name,
+                "total": module_total,
+                "trainable": module_trainable,
+            }
+        )
+
+    # ---------- Affichage terminal ----------
+
+    print("\n" + "=" * 70)
+
+    print("PARAMÈTRES ENTRAÎNABLES")
+
+    print("=" * 70)
+
+    print(
+        f"\nTenseurs entraînables  : "
+        f"{len(trainable_parameters)}"
+    )
+
+    print(
+        f"Tenseurs gelés         : "
+        f"{len(frozen_parameters)}"
+    )
+
+    print(
+        f"\nParamètres entraînables : "
+        f"{total_trainable:,}"
+    )
+
+    print(
+        f"Paramètres gelés        : "
+        f"{total_frozen:,}"
+    )
+
+    print(
+        f"Paramètres totaux       : "
+        f"{total_parameters:,}"
+    )
+
+    if total_parameters > 0:
+
+        print(
+            f"Ratio entraînable       : "
+            f"{trainable_ratio:.4f} %"
+        )
+
+    print(
+        "\nDétail par sous-module :"
+    )
+
+    print(
+        "-" * 70
+    )
+
+    for module in modules_info:
+
+        print(
+            f"  {module['name']:<30} "
+            f"total = {module['total']:>12,}  "
+            f"entraînable = {module['trainable']:>12,}"
+        )
+
+    print(
+        "-" * 70
+    )
+
+    # ---------- Retour pour le rapport Markdown ----------
+
+    return {
+        "trainable_tensors": len(trainable_parameters),
+        "frozen_tensors": len(frozen_parameters),
+        "trainable_parameters": total_trainable,
+        "frozen_parameters": total_frozen,
+        "total_parameters": total_parameters,
+        "trainable_ratio": f"{trainable_ratio:.4f} %",
+        "modules": modules_info,
+    }
+
+
+# ============================================================
 # PERPLEXITÉ
 # ============================================================
 
@@ -220,25 +344,13 @@ def train_one_epoch(
             .to(device)
         )
 
-        # ----------------------------------------------------
-        # RESET GRADIENTS
-        # ----------------------------------------------------
-
         optimizer.zero_grad(
             set_to_none=True
         )
 
-        # ----------------------------------------------------
-        # FORWARD
-        # ----------------------------------------------------
-
         logits = model(
             input_ids
         )
-
-        # ----------------------------------------------------
-        # LOSS
-        # ----------------------------------------------------
 
         loss = F.cross_entropy(
             logits.reshape(
@@ -248,15 +360,7 @@ def train_one_epoch(
             labels.reshape(-1),
         )
 
-        # ----------------------------------------------------
-        # BACKWARD
-        # ----------------------------------------------------
-
         loss.backward()
-
-        # ----------------------------------------------------
-        # GRADIENT NORM
-        # ----------------------------------------------------
 
         gradient_norm = (
             calculate_gradient_norm(
@@ -268,10 +372,6 @@ def train_one_epoch(
             gradient_norm
         )
 
-        # ----------------------------------------------------
-        # GRADIENT CLIPPING
-        # ----------------------------------------------------
-
         if gradient_clip is not None:
 
             torch.nn.utils.clip_grad_norm_(
@@ -279,21 +379,11 @@ def train_one_epoch(
                 gradient_clip,
             )
 
-        # ----------------------------------------------------
-        # OPTIMIZER
-        # ----------------------------------------------------
-
         optimizer.step()
 
-        # ----------------------------------------------------
-        # SCHEDULER
-        # ----------------------------------------------------
+        if scheduler is not None:
 
-        scheduler.step()
-
-        # ----------------------------------------------------
-        # METRICS
-        # ----------------------------------------------------
+            scheduler.step()
 
         total_loss += loss.item()
 
@@ -361,17 +451,9 @@ def validate(
                 .to(device)
             )
 
-            # ------------------------------------------------
-            # FORWARD
-            # ------------------------------------------------
-
             logits = model(
                 input_ids
             )
-
-            # ------------------------------------------------
-            # LOSS
-            # ------------------------------------------------
 
             loss = F.cross_entropy(
                 logits.reshape(
@@ -421,6 +503,8 @@ def save_checkpoint(
     scheduler,
     epoch,
     global_step,
+    training_results,
+    configuration,
 ):
 
     checkpoint_path = Path(
@@ -447,6 +531,11 @@ def save_checkpoint(
         "scheduler_state_dict":
             scheduler.state_dict(),
 
+        "training_results":
+            training_results,
+
+        "configuration":
+            configuration,
     }
 
     torch.save(
@@ -461,21 +550,13 @@ def save_checkpoint(
 
 def main():
 
-    # ========================================================
-    # SEED
-    # ========================================================
-
     set_seed(
         RANDOM_SEED
     )
 
     print("=" * 70)
-    print("ENTRAÎNEMENT GPT classic V1")
+    print("ENTRAÎNEMENT GPT CLASSIC V1")
     print("=" * 70)
-
-    # ========================================================
-    # DEVICE
-    # ========================================================
 
     print(
         f"\nDevice : {DEVICE}"
@@ -488,9 +569,28 @@ def main():
             f"{torch.cuda.get_device_name(0)}"
         )
 
-    # ========================================================
+    # --------------------------------------------------------
+    # CHECKPOINTS
+    # --------------------------------------------------------
+
+    (
+        checkpoint_to_load,
+        checkpoint_to_save,
+    ) = get_checkpoint_paths()
+
+    print(
+        "\nCheckpoint à charger : "
+        f"{checkpoint_to_load}"
+    )
+
+    print(
+        "Checkpoint à sauvegarder : "
+        f"{checkpoint_to_save}"
+    )
+
+    # --------------------------------------------------------
     # TOKENIZER
-    # ========================================================
+    # --------------------------------------------------------
 
     print(
         "\nChargement du tokenizer..."
@@ -505,9 +605,9 @@ def main():
         f"{VOCAB_SIZE}"
     )
 
-    # ========================================================
+    # --------------------------------------------------------
     # DATALOADERS
-    # ========================================================
+    # --------------------------------------------------------
 
     print(
         "\nCréation des DataLoaders..."
@@ -541,9 +641,9 @@ def main():
         f"{MAX_SEQUENCE_LENGTH}"
     )
 
-    # ========================================================
+    # --------------------------------------------------------
     # TRANSFORMER
-    # ========================================================
+    # --------------------------------------------------------
 
     print(
         "\nCréation du Transformer..."
@@ -557,10 +657,6 @@ def main():
         num_layers=NUM_BLOCKS,
         max_sequence_length=MAX_SEQUENCE_LENGTH,
     ).to(DEVICE)
-
-    # ========================================================
-    # PARAMETERS
-    # ========================================================
 
     total_parameters = (
         count_parameters(model)
@@ -576,9 +672,9 @@ def main():
         f"{total_parameters:,}"
     )
 
-    # ========================================================
+    # --------------------------------------------------------
     # OPTIMIZER
-    # ========================================================
+    # --------------------------------------------------------
 
     optimizer = torch.optim.AdamW(
         model.parameters(),
@@ -586,9 +682,28 @@ def main():
         weight_decay=WEIGHT_DECAY,
     )
 
-    # ========================================================
-    # CHECKPOINT
-    # ========================================================
+    # --------------------------------------------------------
+    # SCHEDULER
+    # --------------------------------------------------------
+
+    total_training_steps = (
+        EPOCHS
+        * len(train_dataloader)
+    )
+
+    scheduler = (
+        torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer,
+            T_max=max(
+                1,
+                total_training_steps,
+            ),
+        )
+    )
+
+    # --------------------------------------------------------
+    # CHECKPOINT PRÉCÉDENT
+    # --------------------------------------------------------
 
     print(
         "\nChargement du checkpoint précédent..."
@@ -598,19 +713,21 @@ def main():
 
     start_epoch = 1
 
-    if CHECKPOINT_TO_LOAD is not None:
+    if checkpoint_to_load is not None:
 
         global_step = (
             load_checkpoint(
-                CHECKPOINT_TO_LOAD,
-                model,
-                optimizer,
+                model=model,
+                optimizer=optimizer,
+                scheduler=scheduler,
+                checkpoint_path=checkpoint_to_load,
+                device=str(DEVICE),
             )
         )
 
         print(
             f"Checkpoint chargé : "
-            f"{CHECKPOINT_TO_LOAD}"
+            f"{checkpoint_to_load}"
         )
 
         print(
@@ -628,42 +745,12 @@ def main():
             "Début d'un nouvel entraînement."
         )
 
-    # ========================================================
-    # SCHEDULER
-    # ========================================================
-
-    total_training_steps = (
-        EPOCHS
-        * len(train_dataloader)
-    )
-
-    scheduler = (
-        torch.optim.lr_scheduler.CosineAnnealingLR(
-            optimizer,
-            T_max=max(
-                1,
-                total_training_steps,
-            ),
-        )
-    )
-
-    if global_step > 0:
-
-        scheduler.last_epoch = (
-            global_step - 1
-        )
-
-    # ========================================================
+    # --------------------------------------------------------
     # CONFIGURATION
-    # ========================================================
+    # --------------------------------------------------------
 
     print(
         "\nConfiguration :"
-    )
-
-    print(
-        f"  Documents           = "
-        f"voir dataset"
     )
 
     print(
@@ -723,17 +810,13 @@ def main():
 
     print(
         f"  Ancien checkpoint   = "
-        f"{CHECKPOINT_TO_LOAD}"
+        f"{checkpoint_to_load}"
     )
 
     print(
         f"  Nouveau checkpoint  = "
-        f"{CHECKPOINT_DIRECTORY / CHECKPOINT_TO_SAVE}"
+        f"{checkpoint_to_save}"
     )
-
-    # ========================================================
-    # TRAINING
-    # ========================================================
 
     print(
         "\n" + "=" * 70
@@ -757,6 +840,10 @@ def main():
         f"{EPOCHS}"
     )
 
+    # --------------------------------------------------------
+    # CHRONOMÉTRAGE
+    # --------------------------------------------------------
+
     print(
         "\n" + "=" * 70
     )
@@ -775,6 +862,26 @@ def main():
 
     training_timer.start()
 
+    # --------------------------------------------------------
+    # INITIALISATION DES DERNIERS RÉSULTATS
+    # --------------------------------------------------------
+
+    last_train_loss = None
+
+    last_validation_loss = None
+
+    last_train_ppl = None
+
+    last_validation_ppl = None
+
+    last_gradient_norm = None
+
+    last_learning_rate = None
+
+    # --------------------------------------------------------
+    # ENTRAÎNEMENT
+    # --------------------------------------------------------
+
     for epoch in range(
         start_epoch,
         EPOCHS + 1,
@@ -792,10 +899,6 @@ def main():
             "=" * 70
         )
 
-        # ----------------------------------------------------
-        # TRAIN
-        # ----------------------------------------------------
-
         (
             train_loss,
             train_ppl,
@@ -811,10 +914,6 @@ def main():
             global_step=global_step,
         )
 
-        # ----------------------------------------------------
-        # VALIDATION
-        # ----------------------------------------------------
-
         (
             validation_loss,
             validation_ppl,
@@ -823,10 +922,6 @@ def main():
             dataloader=validation_dataloader,
             device=DEVICE,
         )
-
-        # ----------------------------------------------------
-        # RÉSULTATS
-        # ----------------------------------------------------
 
         print(
             f"\nTrain loss        : "
@@ -863,9 +958,27 @@ def main():
             f"{scheduler.get_last_lr()[0]:.10f}"
         )
 
-    # ========================================================
+        # ----------------------------------------------------
+        # MÉMORISATION DES DERNIERS RÉSULTATS
+        # ----------------------------------------------------
+
+        last_train_loss = train_loss
+
+        last_validation_loss = validation_loss
+
+        last_train_ppl = train_ppl
+
+        last_validation_ppl = validation_ppl
+
+        last_gradient_norm = gradient_norm
+
+        last_learning_rate = (
+            scheduler.get_last_lr()[0]
+        )
+
+    # --------------------------------------------------------
     # FIN DU CHRONOMÉTRAGE
-    # ========================================================
+    # --------------------------------------------------------
 
     training_duration = (
         training_timer.stop()
@@ -893,32 +1006,126 @@ def main():
         f"{training_duration:.2f}s"
     )
 
-    # ========================================================
-    # SAVE
-    # ========================================================
+    # --------------------------------------------------------
+    # RÉSULTATS DE L'ENTRAÎNEMENT
+    # --------------------------------------------------------
 
-    checkpoint_path = (
-        CHECKPOINT_DIRECTORY
-        / CHECKPOINT_TO_SAVE
-    )
+    training_results = {
+
+        "train_loss":
+            last_train_loss,
+
+        "validation_loss":
+            last_validation_loss,
+
+        "train_ppl":
+            last_train_ppl,
+
+        "validation_ppl":
+            last_validation_ppl,
+
+        "gradient_norm":
+            last_gradient_norm,
+
+        "learning_rate":
+            last_learning_rate,
+
+        "duration":
+            training_timer.format_duration(
+                training_duration
+            ),
+
+        "duration_seconds":
+            training_duration,
+    }
+
+    # --------------------------------------------------------
+    # CONFIGURATION DU MODÈLE
+    # --------------------------------------------------------
+
+    configuration = {
+
+        "vocab_size":
+            VOCAB_SIZE,
+
+        "d_model":
+            D_MODEL,
+
+        "num_heads":
+            NUM_HEADS,
+
+        "hidden_dim":
+            HIDDEN_DIM,
+
+        "num_blocks":
+            NUM_BLOCKS,
+
+        "max_sequence_length":
+            MAX_SEQUENCE_LENGTH,
+
+        "batch_size":
+            train_dataloader.batch_size,
+
+        "learning_rate":
+            LEARNING_RATE,
+
+        "weight_decay":
+            WEIGHT_DECAY,
+
+        "gradient_clip":
+            GRADIENT_CLIP,
+    }
+
+    # --------------------------------------------------------
+    # SAUVEGARDE DU CHECKPOINT
+    # --------------------------------------------------------
 
     save_checkpoint(
-        checkpoint_path=checkpoint_path,
+        checkpoint_path=checkpoint_to_save,
         model=model,
         optimizer=optimizer,
         scheduler=scheduler,
         epoch=EPOCHS,
         global_step=global_step,
+        training_results=training_results,
+        configuration=configuration,
     )
 
     print(
         f"\nNouveau checkpoint sauvegardé : "
-        f"{checkpoint_path}"
+        f"{checkpoint_to_save}"
     )
 
-    # ========================================================
+    # --------------------------------------------------------
+    # PARAMÈTRES ENTRAÎNABLES
+    # --------------------------------------------------------
+
+    trainable_info = (
+        print_trainable_parameters(
+            model
+        )
+    )
+
+    # --------------------------------------------------------
+    # GÉNÉRATION DU RAPPORT MARKDOWN
+    # --------------------------------------------------------
+
+    gpu_name = (
+        torch.cuda.get_device_name(0)
+        if DEVICE.type == "cuda"
+        else None
+    )
+
+    save_training_result(
+        checkpoint_path=checkpoint_to_save,
+        trainable_parameters=trainable_info,
+        device=str(DEVICE),
+        gpu_name=gpu_name,
+    )
+
+    # --------------------------------------------------------
     # FIN
-    # ========================================================
+    # --------------------------------------------------------
 
     print(
         "\n" + "=" * 70
@@ -939,18 +1146,14 @@ def main():
 
     print(
         f"Ancien checkpoint : "
-        f"{CHECKPOINT_TO_LOAD}"
+        f"{checkpoint_to_load}"
     )
 
     print(
         f"Nouveau checkpoint : "
-        f"{checkpoint_path}"
+        f"{checkpoint_to_save}"
     )
 
-
-# ============================================================
-# POINT D'ENTRÉE
-# ============================================================
 
 if __name__ == "__main__":
 
