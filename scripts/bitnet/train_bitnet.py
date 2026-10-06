@@ -1035,6 +1035,34 @@ def main():
         )
 
     # ========================================================
+    # SYNCHRONISATION TOKENIZER HF → LOCAL
+    # ========================================================
+    # Vérifie si le tokenizer existe en local.
+    # Si absent, le télécharge depuis HF.
+    # ========================================================
+
+    try:
+
+        from scripts.bitnet.verify_tokenizer_in_hugging_face import (
+            verify_and_sync_tokenizer,
+        )
+
+        print("\n" + "=" * 70)
+        print("VÉRIFICATION DU TOKENIZER")
+        print("=" * 70)
+
+        verify_and_sync_tokenizer()
+
+    except Exception as error:
+
+        print(
+            f"\n⚠️ Vérification tokenizer échouée : {error}"
+        )
+        print(
+            "   → L'entraînement continue avec le tokenizer local."
+        )
+
+    # ========================================================
     # DEVICE
     # ========================================================
 

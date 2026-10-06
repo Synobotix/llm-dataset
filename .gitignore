@@ -6,3 +6,5 @@ __pycache__/
 
 # Checkpoints des modèles
 *.pt
+*.json
+*.jsonl
