@@ -15,7 +15,7 @@ from pathlib import Path
 #
 #     MAX_DOCUMENT = 100
 #
-MAX_DOCUMENT = 5
+MAX_DOCUMENT = 5000
 
 # Proportion du dataset utilisée pour l'entraînement.
 TRAIN_RATIO = 0.80
@@ -44,7 +44,7 @@ RANDOM_SEED = 42
 #     ou 7000
 #     etc.
 #
-MAX_VOCAB_SIZE = 16_000
+MAX_VOCAB_SIZE = 40_000
 
 MIN_FREQUENCY = 2
 

@@ -1439,8 +1439,7 @@ def main():
         )
 
         # ----------------------------------------------------
-        # SAVE (dans la boucle — sans durée, elle n'est pas
-        # encore connue)
+        # SAVE
         # ----------------------------------------------------
 
         save_checkpoint(
@@ -1455,6 +1454,31 @@ def main():
             vocab_size=vocab_size,
             batch_size=BATCH_SIZE,
         )
+
+        # ----------------------------------------------------
+        # UPLOAD CHECKPOINT À CHAQUE ÉPOQUE
+        # ----------------------------------------------------
+
+        try:
+
+            from scripts.hub.hub_sync import (
+                upload_file_to_hub,
+            )
+
+            upload_file_to_hub(
+                new_checkpoint,
+                remote_path=(
+                    f"checkpoints/bitnet/"
+                    f"{Path(new_checkpoint).name}"
+                ),
+            )
+
+        except Exception as error:
+
+            print(
+                f"\n⚠️ Upload checkpoint échoué : "
+                f"{error}"
+            )
 
     # ========================================================
     # DURÉE
@@ -1528,7 +1552,7 @@ def main():
         else None
     )
 
-    save_training_result(
+    result_path = save_training_result(
         checkpoint_path=new_checkpoint,
         trainable_parameters=trainable_info,
         device=str(DEVICE),
@@ -1539,6 +1563,50 @@ def main():
         duration_seconds=training_duration,
         batch_size=BATCH_SIZE,
     )
+
+    # ========================================================
+    # UPLOAD FINAL (checkpoint + résultat)
+    # ========================================================
+
+    try:
+
+        from scripts.hub.hub_sync import (
+            upload_file_to_hub,
+        )
+
+        print(
+            "\n" + "=" * 70
+        )
+
+        print(
+            "UPLOAD FINAL VERS HUGGING FACE"
+        )
+
+        print(
+            "=" * 70
+        )
+
+        upload_file_to_hub(
+            new_checkpoint,
+            remote_path=(
+                f"checkpoints/bitnet/"
+                f"{Path(new_checkpoint).name}"
+            ),
+        )
+
+        upload_file_to_hub(
+            result_path,
+            remote_path=(
+                f"documentation/result/bitnet/"
+                f"{Path(result_path).name}"
+            ),
+        )
+
+    except Exception as error:
+
+        print(
+            f"\n⚠️ Upload final échoué : {error}"
+        )
 
     # ========================================================
     # FIN

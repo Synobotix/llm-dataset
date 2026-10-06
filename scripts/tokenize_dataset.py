@@ -549,6 +549,42 @@ def main():
         f"{BLOCK_SIZE} labels."
     )
 
+    # ========================================================
+    # UPLOAD VERS HUGGING FACE
+    # ========================================================
+
+    try:
+
+        from scripts.hub.hub_sync import (
+            upload_file_to_hub,
+        )
+
+        print()
+        print("=" * 70)
+        print("UPLOAD VERS HUGGING FACE")
+        print("=" * 70)
+
+        upload_file_to_hub(
+            TRAIN_OUTPUT_FILE,
+            remote_path=(
+                f"data/tokenized/{TRAIN_OUTPUT_FILE.name}"
+            ),
+        )
+
+        upload_file_to_hub(
+            VALIDATION_OUTPUT_FILE,
+            remote_path=(
+                f"data/tokenized/{VALIDATION_OUTPUT_FILE.name}"
+            ),
+        )
+
+    except Exception as error:
+
+        print(
+            f"\n⚠️ Upload dataset tokenisé échoué : "
+            f"{error}"
+        )
+
 
 if __name__ == "__main__":
     main()

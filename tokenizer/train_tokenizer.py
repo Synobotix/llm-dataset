@@ -131,6 +131,42 @@ def main():
     print(f"Vocab     : {TOKENIZER_VOCAB_FILE}")
     print(f"Config    : {TOKENIZER_CONFIG_FILE}")
 
+    # ========================================================
+    # UPLOAD VERS HUGGING FACE
+    # ========================================================
+
+    try:
+
+        from scripts.hub.hub_sync import (
+            upload_file_to_hub,
+        )
+
+        print()
+        print("=" * 70)
+        print("UPLOAD VERS HUGGING FACE")
+        print("=" * 70)
+
+        upload_file_to_hub(
+            TOKENIZER_FILE,
+            remote_path=f"tokenizer/{TOKENIZER_FILE.name}",
+        )
+
+        upload_file_to_hub(
+            TOKENIZER_VOCAB_FILE,
+            remote_path=f"tokenizer/{TOKENIZER_VOCAB_FILE.name}",
+        )
+
+        upload_file_to_hub(
+            TOKENIZER_CONFIG_FILE,
+            remote_path=f"tokenizer/{TOKENIZER_CONFIG_FILE.name}",
+        )
+
+    except Exception as error:
+
+        print(
+            f"\n⚠️ Upload tokenizer échoué : {error}"
+        )
+
 
 if __name__ == "__main__":
     main()
