@@ -3,13 +3,16 @@ src/llm/config/parameter.py
 
 Augmentation de documents:
 
-# 1. Split des 20 documents
-poetry run python scripts/split_dataset.py
+# 1. Split des  documents sur huggin face
+poetry run python -m scripts.nemotron.download_and_prepare
+
+poetry run python -m scripts.split_dataset
+
 
 # 2. Entraînement du tokenizer
 On ne change plus, c'est le score pour prédire les futurs tokens sans pour les entraînements from scratch
 
-poetry run python tokenizer/train_tokenizer.py
+poetry run python tokenizer.train_tokenizer.py
 
 # 3. Vérification du vocabulaire
 poetry run python -c "from llm.tokenizer.tokenizer import load_tokenizer; t=load_tokenizer(); print('Vocabulaire :', t.get_vocab_size())"

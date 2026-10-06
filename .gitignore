@@ -6,5 +6,6 @@ __pycache__/
 
 # Checkpoints des modèles
 *.pt
-*.json
-*.jsonl
+tokenizer/config.json
+tokenizer/tokenizer.json
+vocab.json
