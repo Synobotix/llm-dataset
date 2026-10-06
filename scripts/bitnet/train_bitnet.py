@@ -1007,6 +1007,34 @@ def main():
     print("=" * 70)
 
     # ========================================================
+    # SYNCHRONISATION CHECKPOINT HF → LOCAL
+    # ========================================================
+    # Vérifie si un checkpoint plus récent existe sur HF.
+    # Si oui, le télécharge dans checkpoints/bitnet/.
+    # ========================================================
+
+    try:
+
+        from scripts.bitnet.verify_checkpoint_in_hugging_face import (
+            verify_and_sync,
+        )
+
+        print("\n" + "=" * 70)
+        print("SYNCHRONISATION DES CHECKPOINTS — HF vs LOCAL")
+        print("=" * 70)
+
+        verify_and_sync()
+
+    except Exception as error:
+
+        print(
+            f"\n⚠️ Synchronisation échouée : {error}"
+        )
+        print(
+            "   → L'entraînement continue avec les checkpoints locaux."
+        )
+
+    # ========================================================
     # DEVICE
     # ========================================================
 
