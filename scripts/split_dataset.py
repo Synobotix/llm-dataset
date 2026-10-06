@@ -89,18 +89,25 @@ def main():
 
     if MAX_DOCUMENT > len(documents):
 
-        raise ValueError(
-            f"MAX_DOCUMENT={MAX_DOCUMENT} "
+        print(
+            f"\n⚠️ MAX_DOCUMENT={MAX_DOCUMENT} "
             f"mais seulement "
             f"{len(documents)} documents "
             f"sont disponibles."
         )
+        print(f"→ Utilisation de {len(documents)} documents.\n")
+
+        effective_max = len(documents)
+
+    else:
+
+        effective_max = MAX_DOCUMENT
 
     random.seed(RANDOM_SEED)
 
     random.shuffle(documents)
 
-    documents = documents[:MAX_DOCUMENT]
+    documents = documents[:effective_max]
 
     train_size = int(
         len(documents) * TRAIN_RATIO

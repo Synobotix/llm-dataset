@@ -28,16 +28,23 @@ from llm.config.parameters import (
 
 HF_DATASET_ID = "nvidia/Nemotron-SFT-Multilingual-v1"
 
-# Config parmi les 18 disponibles :
-#   code_de, code_es, code_fr, code_it, code_ja, code_zh
-#   math_de, math_es, math_fr, math_it, math_ja, math_zh
-#   stem_de, stem_es, stem_fr, stem_it, stem_ja, stem_zh
-HF_CONFIG = "code_fr"
-
+# Le dataset n'a PAS de configs — il a une seule config "default"
+# On filtre par colonnes
 HF_SPLIT = "train"
 
-# Nombre de documents à extraire (None = tout)
+# Langue cible (parmi: de, es, fr, it, ja, zh)
+TARGET_LANGUAGE = "fr"
+
+# Domaine cible (parmi: multilingual_code, multilingual_math, multilingual_stem)
+# ⚠️ Vérifiez les valeurs exactes avec la cellule de diagnostic ci-dessous
+TARGET_DOMAIN = None   # None = pas de filtre sur le domaine
+
+# Nombre de documents à ÉCRIRE dans le fichier
 MAX_DOCUMENTS = 5000
+
+# Limite de sécurité : nombre max d'exemples à PARCOURIR
+# (car on filtre, il faut parcourir plus que ce qu'on écrit)
+MAX_SCAN = 500_000
 
 
 # ============================================================
@@ -45,9 +52,6 @@ MAX_DOCUMENTS = 5000
 # ============================================================
 
 def format_messages(messages):
-    """
-    Transforme une liste de messages en texte brut.
-    """
 
     parts = []
 
@@ -59,9 +63,7 @@ def format_messages(messages):
         if not content:
             continue
 
-        parts.append(
-            f"<|{role}|>\n{content}"
-        )
+        parts.append(f"<|{role}|>\n{content}")
 
     return "\n\n".join(parts)
 
@@ -76,23 +78,32 @@ def download_and_prepare():
     print("PRÉPARATION NEMOTRON")
     print("=" * 70)
     print(f"\nDataset : {HF_DATASET_ID}")
-    print(f"Config  : {HF_CONFIG}")
-    print(f"Split   : {HF_SPLIT}")
+    print(f"Langue  : {TARGET_LANGUAGE}")
+    print(f"Domaine : {TARGET_DOMAIN or 'tous'}")
     print(f"Sortie  : {CLEAN_DATASET_FILE}")
     print(f"Max doc : {MAX_DOCUMENTS}")
 
     # --------------------------------------------------------
-    # CHARGEMENT EN STREAMING
+    # CHARGEMENT EN STREAMING (sans config)
     # --------------------------------------------------------
 
     print("\nChargement en streaming...")
 
     ds = load_dataset(
         HF_DATASET_ID,
-        HF_CONFIG,
         split=HF_SPLIT,
         streaming=True,
     )
+
+    # --------------------------------------------------------
+    # DIAGNOSTIC : afficher les colonnes disponibles
+    # --------------------------------------------------------
+
+    print("\nColonnes disponibles :")
+
+    for example in ds.take(1):
+        for key in example.keys():
+            print(f"  - {key}")
 
     # --------------------------------------------------------
     # DOSSIER DE SORTIE
@@ -108,28 +119,50 @@ def download_and_prepare():
     # --------------------------------------------------------
 
     written = 0
+    scanned = 0
     skipped = 0
 
     print(f"\nÉcriture vers : {CLEAN_DATASET_FILE}\n")
 
-    with CLEAN_DATASET_FILE.open(
-        "w",
-        encoding="utf-8",
-    ) as output:
+    with CLEAN_DATASET_FILE.open("w", encoding="utf-8") as output:
 
-        for i, example in enumerate(
-            tqdm(
-                ds,
-                total=MAX_DOCUMENTS,
-                desc="Traitement",
-            )
-        ):
+        for example in ds:
 
-            if (
-                MAX_DOCUMENTS is not None
-                and i >= MAX_DOCUMENTS
-            ):
+            scanned += 1
+
+            if scanned > MAX_SCAN:
+                print(f"\n⚠️ Limite de scan atteinte ({MAX_SCAN})")
                 break
+
+            if written >= MAX_DOCUMENTS:
+                break
+
+            if scanned % 1000 == 0:
+                print(f"  Scanné: {scanned} | Écrit: {written} | Ignoré: {skipped}")
+
+            # ------------------------------------------------
+            # Filtre langue
+            # ------------------------------------------------
+
+            if TARGET_LANGUAGE:
+
+                lang = example.get("language")
+
+                if lang != TARGET_LANGUAGE:
+                    skipped += 1
+                    continue
+
+            # ------------------------------------------------
+            # Filtre domaine
+            # ------------------------------------------------
+
+            if TARGET_DOMAIN:
+
+                domain = example.get("domain")
+
+                if domain != TARGET_DOMAIN:
+                    skipped += 1
+                    continue
 
             # ------------------------------------------------
             # Extraction des messages
@@ -141,25 +174,15 @@ def download_and_prepare():
                 skipped += 1
                 continue
 
-            # ------------------------------------------------
-            # Conversion en texte
-            # ------------------------------------------------
-
             text = format_messages(messages)
 
             if not text.strip():
                 skipped += 1
                 continue
 
-            # ------------------------------------------------
-            # Écriture au format attendu par split_dataset.py
-            # ------------------------------------------------
-
-            record = {"text": text}
-
             output.write(
                 json.dumps(
-                    record,
+                    {"text": text},
                     ensure_ascii=False,
                 )
                 + "\n"
@@ -171,47 +194,16 @@ def download_and_prepare():
     # RÉSUMÉ
     # --------------------------------------------------------
 
-    size_mb = (
-        CLEAN_DATASET_FILE.stat().st_size
-        / (1024 * 1024)
-    )
+    size_mb = CLEAN_DATASET_FILE.stat().st_size / (1024 * 1024)
 
     print("\n" + "=" * 70)
     print("PRÉPARATION TERMINÉE")
     print("=" * 70)
-    print(f"\nFichier  : {CLEAN_DATASET_FILE}")
-    print(f"Taille   : {size_mb:.2f} Mo")
-    print(f"Documents: {written}")
-    print(f"Ignorés  : {skipped}")
-
-    # ========================================================
-    # UPLOAD VERS HUGGING FACE
-    # ========================================================
-
-    try:
-
-        from scripts.hub.hub_sync import (
-            upload_file_to_hub,
-        )
-
-        print()
-        print("=" * 70)
-        print("UPLOAD VERS HUGGING FACE")
-        print("=" * 70)
-
-        upload_file_to_hub(
-            CLEAN_DATASET_FILE,
-            remote_path=(
-                f"data/processed/{CLEAN_DATASET_FILE.name}"
-            ),
-        )
-
-    except Exception as error:
-
-        print(
-            f"\n⚠️ Upload Nemotron brut échoué : "
-            f"{error}"
-        )
+    print(f"\nFichier   : {CLEAN_DATASET_FILE}")
+    print(f"Taille    : {size_mb:.2f} Mo")
+    print(f"Documents : {written}")
+    print(f"Scannés   : {scanned}")
+    print(f"Ignorés   : {skipped}")
 
     return CLEAN_DATASET_FILE
 
