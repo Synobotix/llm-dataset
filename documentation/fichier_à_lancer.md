@@ -33,3 +33,18 @@ changement de nombre de block:
 
 # Entraînement BitNet
 poetry run python scripts/train_bitnet.py
+
+-----------------------------------------------------------------------------
+Sur colab:
+
+session
+colab new --gpu T4 --session trainer
+
+entrainement from scratch, à noter il faut alors supprimer les checkpoints
+
+export HF_TOKEN=$(grep "^HF_TOKEN=" .env | cut -d= -f2)
+
+colab exec -s trainer \
+    -f notebooks/training_colab_bitnet.ipynb \
+    --env HF_TOKEN=$HF_TOKEN \
+    --timeout 3600
