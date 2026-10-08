@@ -97,7 +97,7 @@ GRADIENT_CLIP = 1.0
 # ============================================================
 
 # Sauvegarde un checkpoint tous les N steps
-SAVE_EVERY_N_STEPS = 20   # ← à changer ici
+SAVE_EVERY_N_STEPS = 10   # ← à changer ici
 
 # Activer le nettoyage automatique des anciens checkpoints step
 AUTO_CLEAN_STEP_CHECKPOINTS = True
