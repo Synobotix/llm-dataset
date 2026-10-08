@@ -57,6 +57,18 @@ from scripts.bitnet.bitnet_save_training_every import (
     StepCheckpointSaver,
 )
 
+from scripts.bitnet.verif_save.create_modif_json_checkpoint import (
+    register_checkpoint,
+    mark_training_finished,
+    start_training,
+    print_state,
+)
+
+from scripts.bitnet.reprendre_entrainement.reprendre_entrainement import (
+    get_resume_state,
+    download_json_from_hf,
+)
+
 
 # ============================================================
 # DEVICE
@@ -1045,9 +1057,6 @@ def main():
     # ========================================================
     # SYNCHRONISATION CHECKPOINT HF → LOCAL
     # ========================================================
-    # Vérifie si un checkpoint plus récent existe sur HF.
-    # Si oui, le télécharge dans checkpoints/bitnet/.
-    # ========================================================
 
     try:
 
@@ -1073,9 +1082,6 @@ def main():
     # ========================================================
     # SYNCHRONISATION TOKENIZER HF → LOCAL
     # ========================================================
-    # Vérifie si le tokenizer existe en local.
-    # Si absent, le télécharge depuis HF.
-    # ========================================================
 
     try:
 
@@ -1097,6 +1103,23 @@ def main():
         print(
             "   → L'entraînement continue avec le tokenizer local."
         )
+
+    # ========================================================
+    # TÉLÉCHARGEMENT DU JSON DE SUIVI DEPUIS HF
+    # ========================================================
+
+    print("\n" + "=" * 70)
+    print("VÉRIFICATION DU JSON DE SUIVI")
+    print("=" * 70)
+
+    try:
+
+        download_json_from_hf()
+
+    except Exception as error:
+
+        print(f"\n⚠️ Téléchargement JSON échoué : {error}")
+        print("   → Démarrage avec un état vide")
 
     # ========================================================
     # DEVICE
@@ -1305,6 +1328,35 @@ def main():
         )
 
     # ========================================================
+    # ÉTAT DE REPRISE (DURÉE CUMULÉE)
+    # ========================================================
+
+    print("\n" + "=" * 70)
+    print("ÉTAT DE REPRISE")
+    print("=" * 70)
+
+    resume_state = get_resume_state()
+
+    print(f"\n🏁 Training terminé      : {resume_state['training_finished']}")
+    print(f"📊 Époques terminées     : {resume_state['total_epochs_done']}")
+    print(f"📅 Dernière époque       : {resume_state['last_epoch']}")
+    print(f"🔢 Dernier step          : {resume_state['last_step']}")
+    print(f"💾 Dernier checkpoint    : {resume_state['last_checkpoint']}")
+    print(f"\n⏱️  Durée cumulée (avant) : {resume_state['cumulative_duration_human']}")
+
+    # ========================================================
+    # MARQUER L'ENTRAÎNEMENT COMME EN COURS
+    # ========================================================
+
+    print("\n" + "=" * 70)
+    print("DÉMARRAGE DE L'ENTRAÎNEMENT")
+    print("=" * 70)
+
+    start_training()
+
+    print_state()
+
+    # ========================================================
     # CONFIGURATION
     # ========================================================
 
@@ -1424,18 +1476,22 @@ def main():
         "=" * 70
     )
 
-    training_timer = (
-        TrainingTimer()
+    training_timer = TrainingTimer(
+        initial_duration=resume_state["cumulative_duration_seconds"]
     )
 
     training_timer.start()
+
+    print(
+        f"\n⏱️  Timer initialisé avec : "
+        f"{resume_state['cumulative_duration_human']}"
+    )
 
     # ========================================================
     # SAUVEGARDE PÉRIODIQUE
     # ========================================================
 
     step_saver = StepCheckpointSaver(
-        save_every_n_steps=10_000,
         enabled=True,
     )
 
@@ -1451,7 +1507,13 @@ def main():
 
     gradient_norm = None
 
-    global_step = 0
+    # --------------------------------------------------------
+    # Reprendre le global_step depuis le JSON
+    # --------------------------------------------------------
+
+    global_step = resume_state["last_step"]
+
+    print(f"\n🔢 Global step repris : {global_step}")
 
     # ========================================================
     # EPOCHS
@@ -1573,6 +1635,23 @@ def main():
             gradient_norm=gradient_norm,
             vocab_size=vocab_size,
             batch_size=BATCH_SIZE,
+        )
+
+        # ----------------------------------------------------
+        # ENREGISTRER DANS LE JSON (upload HF automatique)
+        # ----------------------------------------------------
+
+        register_checkpoint(
+            checkpoint_path=new_checkpoint,
+            checkpoint_type="epoch",
+            epoch=global_epoch,
+            step=global_step,
+            duration_seconds=training_timer.elapsed(),
+            train_loss=train_loss,
+            validation_loss=validation_loss,
+            train_ppl=train_ppl,
+            validation_ppl=validation_ppl,
+            gradient_norm=gradient_norm,
         )
 
         # ----------------------------------------------------
@@ -1727,6 +1806,13 @@ def main():
         print(
             f"\n⚠️ Upload final échoué : {error}"
         )
+
+    # ========================================================
+    # MARQUER L'ENTRAÎNEMENT COMME TERMINÉ
+    # ========================================================
+
+    mark_training_finished()
+    print_state()
 
     # ========================================================
     # FIN

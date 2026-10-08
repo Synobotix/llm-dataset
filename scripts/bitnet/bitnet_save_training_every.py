@@ -1,11 +1,17 @@
 """
 Sauvegarde périodique du checkpoint BitNet.
 
-Sauvegarde tous les N steps (par défaut 10 000) :
+Sauvegarde tous les N steps (valeur lue depuis parameters.py) :
 - En local  : checkpoints/bitnet/checkpoint_step<N>.pt
 - Sur HF    : checkpoints/bitnet/checkpoint_step<N>.pt
 
-Objectif : ne pas perdre l'entraînement si le serveur coupe.
+Enregistre chaque checkpoint dans training_state.json.
+
+Nettoie automatiquement les anciens checkpoints step
+(local + HF) pour ne garder que le dernier.
+
+Objectif : ne pas perdre l'entraînement si le serveur coupe,
+sans saturer le disque.
 """
 
 import sys
@@ -23,11 +29,14 @@ if str(PROJECT_ROOT) not in sys.path:
 
 
 # ============================================================
-# CONFIGURATION
+# CONFIGURATION (depuis parameters.py)
 # ============================================================
 
-# Intervalle de sauvegarde (en steps)
-SAVE_EVERY_N_STEPS = 10_000
+from llm.config.parameters import (
+    SAVE_EVERY_N_STEPS,
+    AUTO_CLEAN_STEP_CHECKPOINTS,
+)
+
 
 # Dossier local des checkpoints
 LOCAL_CHECKPOINT_DIR = Path("checkpoints/bitnet")
@@ -44,6 +53,10 @@ class StepCheckpointSaver:
     """
     Gère la sauvegarde périodique du checkpoint à intervalles
     réguliers de steps.
+
+    - Sauvegarde local + HF
+    - Enregistre dans training_state.json
+    - Nettoie les anciens checkpoints step
     """
 
     def __init__(
@@ -52,11 +65,13 @@ class StepCheckpointSaver:
         local_dir=LOCAL_CHECKPOINT_DIR,
         hf_folder=HF_CHECKPOINT_FOLDER,
         enabled=True,
+        auto_clean=AUTO_CLEAN_STEP_CHECKPOINTS,
     ):
         self.save_every_n_steps = save_every_n_steps
         self.local_dir = Path(local_dir)
         self.hf_folder = hf_folder
         self.enabled = enabled
+        self.auto_clean = auto_clean
 
         # Compteur interne
         self.last_saved_step = 0
@@ -114,9 +129,8 @@ class StepCheckpointSaver:
 
         Paramètres :
             step                : step actuel
-            save_checkpoint_fn  : fonction de sauvegarde (celle de train_bitnet.py)
+            save_checkpoint_fn  : fonction de sauvegarde
             **kwargs            : arguments passés à save_checkpoint_fn
-                                  (transformer, lm_head, optimizer, etc.)
 
         Retourne le chemin du fichier sauvegardé (ou None).
         """
@@ -136,6 +150,7 @@ class StepCheckpointSaver:
         # ----------------------------------------------------
 
         try:
+
             save_checkpoint_fn(
                 checkpoint_path=checkpoint_path,
                 **kwargs,
@@ -149,6 +164,7 @@ class StepCheckpointSaver:
         except Exception as error:
 
             print(f"\n❌ Échec sauvegarde locale : {error}")
+
             return None
 
         # ----------------------------------------------------
@@ -174,6 +190,56 @@ class StepCheckpointSaver:
             print("   (le checkpoint local est intact)")
 
         # ----------------------------------------------------
+        # Enregistrer dans le JSON
+        # ----------------------------------------------------
+
+        try:
+
+            from scripts.bitnet.verif_save.create_modif_json_checkpoint import (
+                register_checkpoint,
+            )
+
+            register_checkpoint(
+                checkpoint_path=checkpoint_path,
+                checkpoint_type="step",
+                epoch=kwargs.get("epoch", 0),
+                step=step,
+                duration_seconds=None,
+                train_loss=kwargs.get("train_loss"),
+                validation_loss=None,
+                train_ppl=None,
+                validation_ppl=None,
+                gradient_norm=kwargs.get("gradient_norm"),
+            )
+
+        except Exception as error:
+
+            print(f"\n⚠️ Enregistrement JSON échoué : {error}")
+
+        # ----------------------------------------------------
+        # Nettoyer les anciens checkpoints step
+        # ----------------------------------------------------
+
+        if self.auto_clean:
+
+            try:
+
+                from scripts.bitnet.delete_data.delete_checkpoint import (
+                    clean_old_step_checkpoints,
+                )
+
+                print()
+                print("=" * 70)
+                print("NETTOYAGE DES ANCIENS CHECKPOINTS STEP")
+                print("=" * 70)
+
+                clean_old_step_checkpoints()
+
+            except Exception as error:
+
+                print(f"\n⚠️ Nettoyage échoué : {error}")
+
+        # ----------------------------------------------------
         # Mettre à jour le compteur
         # ----------------------------------------------------
 
@@ -195,6 +261,11 @@ class StepCheckpointSaver:
         print(
             f"💾 Sauvegarde périodique : "
             f"tous les {self.save_every_n_steps:,} steps"
+        )
+
+        print(
+            f"   Nettoyage auto : "
+            f"{'✅ activé' if self.auto_clean else '❌ désactivé'}"
         )
 
         print(

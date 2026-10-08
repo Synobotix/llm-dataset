@@ -1,0 +1,2 @@
+cd ~/llm-dataset
+screen -S training

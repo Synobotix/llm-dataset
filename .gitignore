@@ -9,3 +9,5 @@ __pycache__/
 tokenizer/config.json
 tokenizer/tokenizer.json
 vocab.json
+*json
+*jsonl

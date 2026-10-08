@@ -1,6 +1,6 @@
 """
 Pipeline complet Nemotron → BitNet (préparation)
-pour Colab.
+pour Colab ou pour d'autre serveur GPU ou CPU
 """
 
 import subprocess
