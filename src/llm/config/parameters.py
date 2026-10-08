@@ -44,7 +44,7 @@ RANDOM_SEED = 42
 #     ou 7000
 #     etc.
 #
-MAX_VOCAB_SIZE = 50000
+MAX_VOCAB_SIZE = 20000
 
 MIN_FREQUENCY = 2
 
@@ -67,11 +67,11 @@ BLOCK_SIZE = 256
 # BITNET / TRANSFORMER
 # ============================================================
 
-D_MODEL = 256
+D_MODEL = 512
 
 NUM_HEADS = 8
 
-HIDDEN_DIM = 680
+HIDDEN_DIM = 1680
 
 NUM_BLOCKS = 4
 
@@ -86,7 +86,7 @@ BATCH_SIZE = 2
 
 EPOCHS = 2
 
-LEARNING_RATE = 1e-3
+LEARNING_RATE = 3e-4
 
 WEIGHT_DECAY = 0.01
 
