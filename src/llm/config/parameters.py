@@ -15,7 +15,7 @@ from pathlib import Path
 #
 #     MAX_DOCUMENT = 100
 #
-MAX_DOCUMENT = 13
+MAX_DOCUMENT = 50000
 
 # Proportion du dataset utilisée pour l'entraînement.
 TRAIN_RATIO = 0.80
@@ -44,7 +44,7 @@ RANDOM_SEED = 42
 #     ou 7000
 #     etc.
 #
-MAX_VOCAB_SIZE = 1000
+MAX_VOCAB_SIZE = 50000
 
 MIN_FREQUENCY = 2
 
@@ -60,7 +60,7 @@ SPECIAL_TOKENS = [
 # TOKENISATION
 # ============================================================
 
-BLOCK_SIZE = 128
+BLOCK_SIZE = 256
 
 
 # ============================================================
@@ -69,11 +69,11 @@ BLOCK_SIZE = 128
 
 D_MODEL = 256
 
-NUM_HEADS = 4
+NUM_HEADS = 8
 
 HIDDEN_DIM = 680
 
-NUM_BLOCKS = 2
+NUM_BLOCKS = 480
 
 MAX_SEQUENCE_LENGTH = BLOCK_SIZE
 
@@ -97,7 +97,7 @@ GRADIENT_CLIP = 1.0
 # ============================================================
 
 # Sauvegarde un checkpoint tous les N steps
-SAVE_EVERY_N_STEPS = 35   # ← à changer ici
+SAVE_EVERY_N_STEPS = 1000   # ← à changer ici
 
 # Activer le nettoyage automatique des anciens checkpoints step
 AUTO_CLEAN_STEP_CHECKPOINTS = True
