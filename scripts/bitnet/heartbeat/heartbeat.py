@@ -26,6 +26,8 @@ from datetime import datetime, timedelta
 
 import torch
 
+from scripts.bitnet.heartbeat.gpu_monitor import get_gpu_metrics
+
 
 class Heartbeat:
     """
@@ -73,24 +75,6 @@ class Heartbeat:
         return str(timedelta(seconds=int(self.elapsed())))
 
     # ------------------------------------------------------------------
-    # MÉMOIRE
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _gpu_memory_string() -> str:
-        """Retourne l'usage mémoire GPU sous forme lisible."""
-
-        if not torch.cuda.is_available():
-            return ""
-
-        try:
-            allocated = torch.cuda.memory_allocated() / 1e9
-            reserved = torch.cuda.memory_reserved() / 1e9
-            return f" | GPU: {allocated:.2f}/{reserved:.2f} Go"
-        except Exception:
-            return ""
-
-    # ------------------------------------------------------------------
     # HEARTBEAT
     # ------------------------------------------------------------------
 
@@ -136,9 +120,21 @@ class Heartbeat:
 
         parts.append(f"| {self.elapsed_human()}")
 
-        mem = self._gpu_memory_string()
-        if mem:
-            parts.append(mem)
+        # -------- Métriques GPU --------
+
+        try:
+            gpu = get_gpu_metrics()
+
+            if gpu.get("available") and gpu.get("devices"):
+                d = gpu["devices"][0]
+                parts.append(
+                    f"| GPU {d['memory_used_mb']}/{d['memory_total_mb']} Mo "
+                    f"({d['memory_percent']}%) "
+                    f"| Util {d['utilization_gpu_percent']}% "
+                    f"| {d['temperature_c']}°C"
+                )
+        except Exception:
+            pass
 
         if extra:
             parts.append(extra)

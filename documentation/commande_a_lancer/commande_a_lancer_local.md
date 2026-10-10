@@ -2,6 +2,12 @@ cd ~/liste_projet/stage/llm
 
 #Nb: le "cd" est le fichier à lancer pour accéder au projet dans votre PC
 
+
+cat > .env << 'EOF'
+HF_TOKEN=hf_votre_token_ici
+EOF
+
+
 # Charger le token dans le shell
 export HF_TOKEN=$(grep "^HF_TOKEN=" .env | cut -d= -f2)
 

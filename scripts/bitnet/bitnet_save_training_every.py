@@ -1,3 +1,5 @@
+# scripts/bitnet/bitnet_save_training_every.py
+
 """
 Sauvegarde périodique du checkpoint BitNet.
 
@@ -35,6 +37,10 @@ if str(PROJECT_ROOT) not in sys.path:
 from llm.config.parameters import (
     SAVE_EVERY_N_STEPS,
     AUTO_CLEAN_STEP_CHECKPOINTS,
+)
+
+from scripts.bitnet.heartbeat.gpu_monitor import (
+    get_gpu_metrics,
 )
 
 
@@ -146,6 +152,28 @@ class StepCheckpointSaver:
         print("=" * 70)
 
         # ----------------------------------------------------
+        # 🔥 Collecte des métriques GPU
+        # ----------------------------------------------------
+
+        gpu_metrics = get_gpu_metrics()
+
+        if gpu_metrics.get("available") and gpu_metrics.get("devices"):
+            d = gpu_metrics["devices"][0]
+            print(
+                f"\n🧠 GPU : {d['memory_used_mb']}/{d['memory_total_mb']} Mo "
+                f"({d['memory_percent']}%) "
+                f"| Util {d['utilization_gpu_percent']}% "
+                f"| {d['temperature_c']}°C"
+            )
+
+        # ----------------------------------------------------
+        # Injection dans les kwargs si non fournis
+        # ----------------------------------------------------
+
+        save_kwargs = dict(kwargs)
+        save_kwargs.setdefault("gpu_metrics", gpu_metrics)
+
+        # ----------------------------------------------------
         # Sauvegarde locale
         # ----------------------------------------------------
 
@@ -153,7 +181,7 @@ class StepCheckpointSaver:
 
             save_checkpoint_fn(
                 checkpoint_path=checkpoint_path,
-                **kwargs,
+                **save_kwargs,
             )
 
             size_mb = checkpoint_path.stat().st_size / (1024 * 1024)
@@ -210,6 +238,7 @@ class StepCheckpointSaver:
                 train_ppl=None,
                 validation_ppl=None,
                 gradient_norm=kwargs.get("gradient_norm"),
+                gpu_metrics=gpu_metrics,
             )
 
         except Exception as error:

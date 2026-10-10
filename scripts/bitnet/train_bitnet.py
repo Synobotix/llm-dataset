@@ -63,6 +63,10 @@ from scripts.bitnet.heartbeat.heartbeat import (
     Heartbeat,
 )
 
+from scripts.bitnet.heartbeat.gpu_monitor import (
+    get_gpu_metrics,
+)
+
 from scripts.bitnet.verif_save.create_modif_json_checkpoint import (
     register_checkpoint,
     mark_training_finished,
@@ -947,6 +951,7 @@ def save_checkpoint(
     duration="N/A",
     duration_seconds="N/A",
     batch_size="N/A",
+    gpu_metrics=None,
 ):
     """
     Sauvegarde le nouveau checkpoint.
@@ -1009,6 +1014,13 @@ def save_checkpoint(
 
         "duration_seconds":
             duration_seconds,
+
+        # ------------------------------------------------
+        # 🔥 MÉTRIQUES GPU AU MOMENT DE LA SAUVEGARDE
+        # ------------------------------------------------
+
+        "gpu_metrics":
+            gpu_metrics if gpu_metrics is not None else {},
 
         "config": {
 
@@ -1669,6 +1681,7 @@ def main():
             gradient_norm=gradient_norm,
             vocab_size=vocab_size,
             batch_size=BATCH_SIZE,
+            gpu_metrics=get_gpu_metrics(),
         )
 
         # ----------------------------------------------------
@@ -1686,6 +1699,7 @@ def main():
             train_ppl=train_ppl,
             validation_ppl=validation_ppl,
             gradient_norm=gradient_norm,
+            gpu_metrics=get_gpu_metrics(),
         )
 
         # ----------------------------------------------------
@@ -1764,6 +1778,7 @@ def main():
             ),
             duration_seconds=training_duration,
             batch_size=BATCH_SIZE,
+            gpu_metrics=get_gpu_metrics(),
         )
 
     # ========================================================
