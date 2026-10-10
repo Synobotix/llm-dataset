@@ -82,7 +82,7 @@ MAX_SEQUENCE_LENGTH = BLOCK_SIZE
 # ENTRAÎNEMENT
 # ============================================================
 
-BATCH_SIZE = 8
+BATCH_SIZE = 4
 
 EPOCHS = 2
 
