@@ -7,6 +7,7 @@ Le fichier JSON contient :
 - La durée de chaque étape d'entraînement
 - Le statut training_finished (True/False)
 - Les métriques (loss, PPL, etc.)
+- Les métriques GPU (VRAM, utilisation, température)
 
 Le JSON est synchronisé avec train_bitnet.py à chaque sauvegarde
 ET uploadé sur Hugging Face.
@@ -130,6 +131,7 @@ def register_checkpoint(
     train_ppl=None,
     validation_ppl=None,
     gradient_norm=None,
+    gpu_metrics=None,
 ):
     """
     Enregistre un checkpoint dans le JSON.
@@ -145,6 +147,7 @@ def register_checkpoint(
         train_ppl          : perplexité d'entraînement
         validation_ppl     : perplexité de validation
         gradient_norm      : norme du gradient
+        gpu_metrics        : dict des métriques GPU (optionnel)
     """
 
     checkpoint_path = Path(checkpoint_path)
@@ -167,6 +170,7 @@ def register_checkpoint(
         "train_ppl": train_ppl,
         "validation_ppl": validation_ppl,
         "gradient_norm": gradient_norm,
+        "gpu_metrics": gpu_metrics if gpu_metrics is not None else {},
         "created_at": datetime.now().isoformat(),
     }
 
@@ -193,6 +197,22 @@ def register_checkpoint(
         state["checkpoints"].append(entry)
 
         print(f"   ✅ Checkpoint enregistré : {checkpoint_path.name}")
+
+    # --------------------------------------------------------
+    # Affichage des métriques GPU si présentes
+    # --------------------------------------------------------
+
+    if gpu_metrics and gpu_metrics.get("devices"):
+
+        d = gpu_metrics["devices"][0]
+
+        print(
+            f"      🧠 GPU : "
+            f"{d['memory_used_mb']}/{d['memory_total_mb']} Mo "
+            f"({d['memory_percent']}%) "
+            f"| Util {d['utilization_gpu_percent']}% "
+            f"| {d['temperature_c']}°C"
+        )
 
     # --------------------------------------------------------
     # Trier par step
