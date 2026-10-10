@@ -242,11 +242,7 @@ def main():
         print(f"\n⚠️ {len(pt_files)} checkpoint(s) .pt détecté(s)")
         print("   Les checkpoints sont volumineux (~200 Mo chacun)")
 
-        confirm = input("\n📥 Continuer le téléchargement ? (o/N) : ").strip().lower()
-
-        if confirm != "o":
-            print("\n⏭️ Téléchargement annulé")
-            return 0
+        confirm = "o"  # confirmation automatique pour environnement non-interactif
 
     # --------------------------------------------------------
     # Télécharger
