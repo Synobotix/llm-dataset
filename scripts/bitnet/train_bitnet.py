@@ -1,3 +1,5 @@
+# scripts/bitnet/train_bitnet.py
+
 import sys
 from pathlib import Path
 
@@ -55,6 +57,10 @@ from scripts.bitnet.save_result_bitnet import (
 
 from scripts.bitnet.bitnet_save_training_every import (
     StepCheckpointSaver,
+)
+
+from scripts.bitnet.heartbeat.heartbeat import (
+    Heartbeat,
 )
 
 from scripts.bitnet.verif_save.create_modif_json_checkpoint import (
@@ -658,6 +664,7 @@ def train_one_epoch(
     global_step=0,
     save_checkpoint_fn=None,
     save_checkpoint_kwargs=None,
+    heartbeat=None,
 ):
     """
     Effectue une époque complète d'entraînement.
@@ -776,6 +783,17 @@ def train_one_epoch(
         # ------------------------------------------------
 
         global_step += 1
+
+        # ------------------------------------------------
+        # 💓 HEARTBEAT
+        # ------------------------------------------------
+
+        if heartbeat is not None:
+
+            heartbeat.beat(
+                step=global_step,
+                loss=loss.item(),
+            )
 
         # ------------------------------------------------
         # Sauvegarde périodique
@@ -1498,6 +1516,21 @@ def main():
     step_saver.print_status()
 
     # ========================================================
+    # 💓 HEARTBEAT
+    # ========================================================
+
+    heartbeat = Heartbeat(
+        interval=30.0,
+        enabled=True,
+        prefix="💓",
+    )
+
+    print(
+        f"\n💓 Heartbeat activé "
+        f"(intervalle = {heartbeat.interval}s)"
+    )
+
+    # ========================================================
     # INITIALISATION DES DERNIÈRES MÉTRIQUES
     # ========================================================
 
@@ -1568,6 +1601,7 @@ def main():
                 "vocab_size": vocab_size,
                 "batch_size": BATCH_SIZE,
             },
+            heartbeat=heartbeat,
         )
 
         # ----------------------------------------------------
