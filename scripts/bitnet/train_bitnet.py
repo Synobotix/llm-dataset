@@ -1,5 +1,6 @@
 # scripts/bitnet/train_bitnet.py
 
+import os
 import sys
 from pathlib import Path
 
@@ -112,6 +113,71 @@ MONITORING_UPLOAD_INTERVAL = 40
 TRAIN_DATASET_FILE = Path(
     "data/tokenized/train.jsonl"
 )
+
+
+# ============================================================
+# UTILITAIRES STATE_DICT / PARALLÉLISME
+# ============================================================
+
+def unwrap_state_dict(state_dict):
+    """
+    Retire le préfixe 'module.' des clés si le modèle
+    a été enveloppé dans DataParallel.
+
+    Cela garantit que les checkpoints sauvegardés sont
+    compatibles avec ou sans DataParallel.
+    """
+
+    new_state_dict = {}
+
+    for key, value in state_dict.items():
+
+        if key.startswith("module."):
+            new_key = key[len("module."):]
+        else:
+            new_key = key
+
+        new_state_dict[new_key] = value
+
+    return new_state_dict
+
+
+def adapt_state_dict_for_model(state_dict, model):
+    """
+    Ajoute le préfixe 'module.' si le modèle est enveloppé
+    dans DataParallel, sinon retourne le state_dict tel quel.
+
+    Permet de charger un checkpoint sauvegardé avec ou
+    sans DataParallel dans n'importe quelle configuration.
+    """
+
+    is_data_parallel = isinstance(model, nn.DataParallel)
+
+    # Détecter si le state_dict a déjà le préfixe
+    has_module_prefix = any(
+        key.startswith("module.")
+        for key in state_dict.keys()
+    )
+
+    if is_data_parallel and not has_module_prefix:
+
+        # Ajouter le préfixe
+        new_state_dict = {}
+
+        for key, value in state_dict.items():
+            new_state_dict[f"module.{key}"] = value
+
+        return new_state_dict
+
+    elif not is_data_parallel and has_module_prefix:
+
+        # Retirer le préfixe
+        return unwrap_state_dict(state_dict)
+
+    else:
+
+        # Rien à faire
+        return state_dict
 
 
 # ============================================================
@@ -271,23 +337,60 @@ class TokenizedDataset(
 
 
 # ============================================================
-# TRAIN DATALOADER
+# TRAIN DATALOADER (OPTIMISÉ)
 # ============================================================
 
 def create_train_dataloader():
     """
     Crée le DataLoader du dataset d'entraînement.
+
+    Optimisations :
+    - num_workers : parallélise le chargement CPU
+    - pin_memory  : accélère les transferts CPU → GPU
+    - persistent_workers : évite de recréer les workers
+    - prefetch_factor : nombre de batchs préchargés
     """
 
     dataset = TokenizedDataset(
         TRAIN_DATASET_FILE
     )
 
+    # Nombre de workers optimal :
+    # - 0 si CPU-only (évite les surcoûts)
+    # - min(4, cpu_count) si GPU
+    if DEVICE.type == "cuda":
+        num_workers = min(4, os.cpu_count() or 1)
+        pin_memory = True
+        persistent_workers = num_workers > 0
+        prefetch_factor = 2 if num_workers > 0 else None
+    else:
+        num_workers = 0
+        pin_memory = False
+        persistent_workers = False
+        prefetch_factor = None
+
+    print(
+        f"\n📦 DataLoader config (train) :"
+    )
+    print(f"   num_workers        : {num_workers}")
+    print(f"   pin_memory         : {pin_memory}")
+    print(f"   persistent_workers : {persistent_workers}")
+    print(f"   prefetch_factor    : {prefetch_factor}")
+
+    dataloader_kwargs = {
+        "batch_size": BATCH_SIZE,
+        "shuffle": True,
+        "num_workers": num_workers,
+        "pin_memory": pin_memory,
+    }
+
+    if num_workers > 0:
+        dataloader_kwargs["persistent_workers"] = persistent_workers
+        dataloader_kwargs["prefetch_factor"] = prefetch_factor
+
     dataloader = torch.utils.data.DataLoader(
         dataset,
-        batch_size=BATCH_SIZE,
-        shuffle=True,
-        num_workers=0,
+        **dataloader_kwargs,
     )
 
     return dataloader
@@ -321,11 +424,19 @@ def calculate_perplexity(loss):
 def calculate_gradient_norm(model):
     """
     Calcule la norme globale des gradients.
+
+    Compatible avec DataParallel : on unwrap le modèle
+    pour accéder aux paramètres réels.
     """
+
+    if isinstance(model, nn.DataParallel):
+        target = model.module
+    else:
+        target = model
 
     total_norm = 0.0
 
-    for parameter in model.parameters():
+    for parameter in target.parameters():
 
         if parameter.grad is None:
             continue
@@ -389,17 +500,25 @@ def upload_monitoring_to_hub():
 def print_trainable_parameters(model, model_name="MODEL"):
     """
     Affiche et retourne les paramètres entraînables du modèle.
+
+    Compatible avec DataParallel.
     """
+
+    # Unwrap pour accéder au modèle réel
+    if isinstance(model, nn.DataParallel):
+        target = model.module
+    else:
+        target = model
 
     trainable_parameters = [
         p
-        for p in model.parameters()
+        for p in target.parameters()
         if p.requires_grad
     ]
 
     frozen_parameters = [
         p
-        for p in model.parameters()
+        for p in target.parameters()
         if not p.requires_grad
     ]
 
@@ -423,7 +542,7 @@ def print_trainable_parameters(model, model_name="MODEL"):
 
     modules_info = []
 
-    for name, module in model.named_children():
+    for name, module in target.named_children():
 
         module_total = sum(
             p.numel() for p in module.parameters()
@@ -527,6 +646,9 @@ def load_checkpoint(
     - l'état de l'optimizer
     - l'époque précédente
     - les métriques précédentes
+
+    Compatible avec/sans DataParallel grâce à
+    adapt_state_dict_for_model().
     """
 
     checkpoint_path = Path(
@@ -651,16 +773,26 @@ def load_checkpoint(
             f"{MAX_SEQUENCE_LENGTH}"
         )
 
+    # ----------------------------------------------------
+    # Adapter les state_dict au parallélisme actuel
+    # ----------------------------------------------------
+
+    transformer_state_dict = adapt_state_dict_for_model(
+        checkpoint["transformer_state_dict"],
+        transformer,
+    )
+
+    lm_head_state_dict = adapt_state_dict_for_model(
+        checkpoint["lm_head_state_dict"],
+        lm_head,
+    )
+
     transformer.load_state_dict(
-        checkpoint[
-            "transformer_state_dict"
-        ]
+        transformer_state_dict
     )
 
     lm_head.load_state_dict(
-        checkpoint[
-            "lm_head_state_dict"
-        ]
+        lm_head_state_dict
     )
 
     optimizer.load_state_dict(
@@ -756,13 +888,15 @@ def train_one_epoch(
         input_ids = batch[
             "input_ids"
         ].to(
-            DEVICE
+            DEVICE,
+            non_blocking=True,
         )
 
         labels = batch[
             "labels"
         ].to(
-            DEVICE
+            DEVICE,
+            non_blocking=True,
         )
 
         optimizer.zero_grad()
@@ -1000,13 +1134,15 @@ def validate(
         input_ids = batch[
             "input_ids"
         ].to(
-            DEVICE
+            DEVICE,
+            non_blocking=True,
         )
 
         labels = batch[
             "labels"
         ].to(
-            DEVICE
+            DEVICE,
+            non_blocking=True,
         )
 
         hidden_states = transformer(
@@ -1087,6 +1223,10 @@ def save_checkpoint(
 ):
     """
     Sauvegarde le nouveau checkpoint.
+
+    Compatible avec/sans DataParallel grâce à
+    unwrap_state_dict() : les checkpoints sont toujours
+    sauvegardés SANS le préfixe 'module.'.
     """
 
     checkpoint_path = Path(
@@ -1113,6 +1253,18 @@ def save_checkpoint(
     if validation_ppl is None:
         validation_ppl = calculate_perplexity(validation_loss)
 
+    # ------------------------------------------------
+    # Unwrap des state_dict pour compatibilité
+    # ------------------------------------------------
+
+    transformer_state_dict = unwrap_state_dict(
+        transformer.state_dict()
+    )
+
+    lm_head_state_dict = unwrap_state_dict(
+        lm_head.state_dict()
+    )
+
     checkpoint = {
 
         "epoch":
@@ -1122,10 +1274,10 @@ def save_checkpoint(
             None,   # rempli par le saver si besoin
 
         "transformer_state_dict":
-            transformer.state_dict(),
+            transformer_state_dict,
 
         "lm_head_state_dict":
-            lm_head.state_dict(),
+            lm_head_state_dict,
 
         "optimizer_state_dict":
             optimizer.state_dict(),
@@ -1170,19 +1322,19 @@ def save_checkpoint(
                 vocab_size,
 
             "d_model":
-                transformer.d_model,
+                transformer.module.d_model if isinstance(transformer, nn.DataParallel) else transformer.d_model,
 
             "num_heads":
-                transformer.num_heads,
+                transformer.module.num_heads if isinstance(transformer, nn.DataParallel) else transformer.num_heads,
 
             "hidden_dim":
-                transformer.hidden_dim,
+                transformer.module.hidden_dim if isinstance(transformer, nn.DataParallel) else transformer.hidden_dim,
 
             "num_blocks":
-                transformer.num_blocks,
+                transformer.module.num_blocks if isinstance(transformer, nn.DataParallel) else transformer.num_blocks,
 
             "max_sequence_length":
-                transformer.max_sequence_length,
+                transformer.module.max_sequence_length if isinstance(transformer, nn.DataParallel) else transformer.max_sequence_length,
 
             "batch_size":
                 batch_size,
@@ -1363,7 +1515,7 @@ def main():
     )
 
     print(
-        f"Train batches      : "
+        f"\nTrain batches      : "
         f"{len(train_loader)}"
     )
 
@@ -1417,17 +1569,83 @@ def main():
     )
 
     # ========================================================
+    # 🖥️ PARALLÉLISME MULTI-GPU
+    # ========================================================
+
+    GPU_COUNT = (
+        torch.cuda.device_count()
+        if DEVICE.type == "cuda"
+        else 0
+    )
+
+    USE_DATA_PARALLEL = GPU_COUNT > 1
+
+    if USE_DATA_PARALLEL:
+
+        print(
+            f"\n🖥️  Parallélisme activé : "
+            f"{GPU_COUNT} GPU détectés"
+        )
+
+        print(
+            f"   → nn.DataParallel utilisé "
+            f"sur les GPU 0..{GPU_COUNT - 1}"
+        )
+
+        transformer = nn.DataParallel(
+            transformer,
+            device_ids=list(range(GPU_COUNT)),
+        )
+
+        lm_head = nn.DataParallel(
+            lm_head,
+            device_ids=list(range(GPU_COUNT)),
+        )
+
+    elif GPU_COUNT == 1:
+
+        print(
+            f"\n🖥️  Un seul GPU détecté "
+            f"({torch.cuda.get_device_name(0)})"
+        )
+
+        print("   → Pas de parallélisme")
+
+    else:
+
+        print(
+            "\n🖥️  Aucun GPU détecté"
+        )
+
+        print(
+            "   → Entraînement sur CPU"
+        )
+
+    # ========================================================
     # PARAMETERS
     # ========================================================
 
+    # Unwrap pour compter les paramètres
+    transformer_raw = (
+        transformer.module
+        if isinstance(transformer, nn.DataParallel)
+        else transformer
+    )
+
+    lm_head_raw = (
+        lm_head.module
+        if isinstance(lm_head, nn.DataParallel)
+        else lm_head
+    )
+
     transformer_parameters = sum(
         parameter.numel()
-        for parameter in transformer.parameters()
+        for parameter in transformer_raw.parameters()
     )
 
     lm_head_parameters = sum(
         parameter.numel()
-        for parameter in lm_head.parameters()
+        for parameter in lm_head_raw.parameters()
     )
 
     total_parameters = (
@@ -1604,6 +1822,11 @@ def main():
     print(
         f"  Nouveau checkpoint  = "
         f"{new_checkpoint}"
+    )
+
+    print(
+        f"  DataParallel        = "
+        f"{'✅ activé' if USE_DATA_PARALLEL else '❌ désactivé'}"
     )
 
     # ========================================================
