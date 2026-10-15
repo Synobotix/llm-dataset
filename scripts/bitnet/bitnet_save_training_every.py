@@ -174,6 +174,16 @@ class StepCheckpointSaver:
         save_kwargs.setdefault("gpu_metrics", gpu_metrics)
 
         # ----------------------------------------------------
+        # Vérification des métriques live
+        # ----------------------------------------------------
+
+        print(f"\n📊 Métriques live au step {step}:")
+        print(f"   train_loss     : {save_kwargs.get('train_loss')}")
+        print(f"   validation_loss: {save_kwargs.get('validation_loss')}")
+        print(f"   gradient_norm  : {save_kwargs.get('gradient_norm')}")
+        print(f"   epoch          : {save_kwargs.get('epoch')}")
+
+        # ----------------------------------------------------
         # Sauvegarde locale
         # ----------------------------------------------------
 
@@ -230,14 +240,14 @@ class StepCheckpointSaver:
             register_checkpoint(
                 checkpoint_path=checkpoint_path,
                 checkpoint_type="step",
-                epoch=kwargs.get("epoch", 0),
+                epoch=save_kwargs.get("epoch", 0),
                 step=step,
                 duration_seconds=None,
-                train_loss=kwargs.get("train_loss"),
-                validation_loss=None,
+                train_loss=save_kwargs.get("train_loss"),
+                validation_loss=save_kwargs.get("validation_loss"),
                 train_ppl=None,
                 validation_ppl=None,
-                gradient_norm=kwargs.get("gradient_norm"),
+                gradient_norm=save_kwargs.get("gradient_norm"),
                 gpu_metrics=gpu_metrics,
             )
 

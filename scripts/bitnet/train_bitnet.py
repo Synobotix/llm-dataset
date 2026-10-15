@@ -98,9 +98,11 @@ DEVICE = torch.device(
 
 MONITORING_JSON_PATH = Path("monitoring.json")
 
+TRAINING_STATE_PATH = Path("training_state.json")
+
 # Fréquence d'upload de monitoring.json vers Hugging Face.
 # ⚠️ Ne pas descendre en dessous de 20 (rate limits HF).
-MONITORING_UPLOAD_INTERVAL = 50
+MONITORING_UPLOAD_INTERVAL = 40
 
 
 # ============================================================
@@ -338,12 +340,12 @@ def calculate_gradient_norm(model):
 
 
 # ============================================================
-# UPLOAD MONITORING.JSON VERS HF
+# UPLOAD MONITORING.JSON + TRAINING_STATE.JSON VERS HF
 # ============================================================
 
 def upload_monitoring_to_hub():
     """
-    Upload monitoring.json vers Hugging Face.
+    Upload monitoring.json et training_state.json vers Hugging Face.
 
     Ne bloque jamais l'entraînement en cas d'erreur.
     """
@@ -358,6 +360,12 @@ def upload_monitoring_to_hub():
             MONITORING_JSON_PATH,
             remote_path="monitoring.json",
         )
+
+        if TRAINING_STATE_PATH.exists():
+            upload_file_to_hub(
+                TRAINING_STATE_PATH,
+                remote_path="training_state.json",
+            )
 
         return True
 
@@ -718,6 +726,7 @@ def train_one_epoch(
     epoch=None,
     monitoring_path=MONITORING_JSON_PATH,
     monitoring_upload_interval=MONITORING_UPLOAD_INTERVAL,
+    live_metrics=None,
 ):
     """
     Effectue une époque complète d'entraînement.
@@ -838,6 +847,17 @@ def train_one_epoch(
         global_step += 1
 
         # ------------------------------------------------
+        # 📊 Mise à jour des métriques live
+        # ------------------------------------------------
+
+        if live_metrics is not None:
+
+            live_metrics["step"] = global_step
+            live_metrics["epoch"] = epoch
+            live_metrics["train_loss"] = loss.item()
+            live_metrics["gradient_norm"] = last_gradient_norm
+
+        # ------------------------------------------------
         # 💓 HEARTBEAT
         # ------------------------------------------------
 
@@ -894,10 +914,22 @@ def train_one_epoch(
             and save_checkpoint_fn is not None
         ):
 
+            # Construire les kwargs à jour
+            kwargs = dict(save_checkpoint_kwargs or {})
+
+            if live_metrics is not None:
+
+                kwargs.update({
+                    "epoch": live_metrics["epoch"],
+                    "train_loss": live_metrics["train_loss"],
+                    "validation_loss": live_metrics.get("validation_loss", 0.0),
+                    "gradient_norm": live_metrics["gradient_norm"],
+                })
+
             step_saver.save(
                 step=global_step,
                 save_checkpoint_fn=save_checkpoint_fn,
-                **(save_checkpoint_kwargs or {}),
+                **kwargs,
             )
 
         # ------------------------------------------------
@@ -1051,6 +1083,14 @@ def save_checkpoint(
         parents=True,
         exist_ok=True,
     )
+
+    # Gestion des valeurs None (au cas où)
+    if train_loss is None:
+        train_loss = 0.0
+    if validation_loss is None:
+        validation_loss = 0.0
+    if gradient_norm is None:
+        gradient_norm = 0.0
 
     train_ppl = calculate_perplexity(
         train_loss
@@ -1647,6 +1687,18 @@ def main():
     print(f"\n🔢 Global step repris : {global_step}")
 
     # ========================================================
+    # MÉTRIQUES LIVE (partagées entre steps et époques)
+    # ========================================================
+
+    live_metrics = {
+        "step": global_step,
+        "epoch": previous_epoch,
+        "train_loss": 0.0,
+        "validation_loss": 0.0,
+        "gradient_norm": 0.0,
+    }
+
+    # ========================================================
     # MONITORING INITIAL
     # ========================================================
 
@@ -1719,10 +1771,6 @@ def main():
                 "transformer": transformer,
                 "lm_head": lm_head,
                 "optimizer": optimizer,
-                "epoch": global_epoch,
-                "train_loss": train_loss if train_loss is not None else 0.0,
-                "validation_loss": validation_loss if validation_loss is not None else 0.0,
-                "gradient_norm": gradient_norm if gradient_norm is not None else 0.0,
                 "vocab_size": vocab_size,
                 "batch_size": BATCH_SIZE,
             },
@@ -1730,6 +1778,7 @@ def main():
             epoch=global_epoch,
             monitoring_path=MONITORING_JSON_PATH,
             monitoring_upload_interval=MONITORING_UPLOAD_INTERVAL,
+            live_metrics=live_metrics,
         )
 
         # ----------------------------------------------------
@@ -1742,6 +1791,15 @@ def main():
             dataloader=validation_loader,
             criterion=criterion,
         )
+
+        # ----------------------------------------------------
+        # Mise à jour des métriques live (post-validation)
+        # ----------------------------------------------------
+
+        live_metrics["epoch"] = global_epoch
+        live_metrics["train_loss"] = train_loss
+        live_metrics["validation_loss"] = validation_loss
+        live_metrics["gradient_norm"] = gradient_norm
 
         # ----------------------------------------------------
         # METRICS
