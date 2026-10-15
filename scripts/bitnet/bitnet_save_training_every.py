@@ -16,6 +16,7 @@ Objectif : ne pas perdre l'entraînement si le serveur coupe,
 sans saturer le disque.
 """
 
+import math
 import sys
 from pathlib import Path
 
@@ -49,6 +50,24 @@ LOCAL_CHECKPOINT_DIR = Path("checkpoints/bitnet")
 
 # Dossier distant sur HF
 HF_CHECKPOINT_FOLDER = "checkpoints/bitnet"
+
+
+# ============================================================
+# UTILITAIRES
+# ============================================================
+
+def safe_perplexity(loss):
+    """
+    Calcule la perplexité en gérant les cas None / inf / 0.
+    """
+
+    if loss is None:
+        return None
+
+    try:
+        return math.exp(loss)
+    except (OverflowError, ValueError):
+        return float("inf")
 
 
 # ============================================================
@@ -100,7 +119,6 @@ class StepCheckpointSaver:
         if current_step < self.save_every_n_steps:
             return False
 
-        # Sauvegarder si on a dépassé le dernier multiple
         next_milestone = (
             (self.last_saved_step // self.save_every_n_steps) + 1
         ) * self.save_every_n_steps
@@ -133,12 +151,13 @@ class StepCheckpointSaver:
         """
         Sauvegarde le checkpoint via la fonction fournie.
 
-        Paramètres :
-            step                : step actuel
-            save_checkpoint_fn  : fonction de sauvegarde
-            **kwargs            : arguments passés à save_checkpoint_fn
-
-        Retourne le chemin du fichier sauvegardé (ou None).
+        Toutes les métriques sont injectées dans le checkpoint :
+        - train_loss, validation_loss
+        - train_ppl, validation_ppl
+        - gradient_norm
+        - duration, duration_seconds
+        - gpu_metrics, cpu_metrics
+        - epoch, step
         """
 
         if not self.should_save(step):
@@ -152,7 +171,7 @@ class StepCheckpointSaver:
         print("=" * 70)
 
         # ----------------------------------------------------
-        # 🔥 Collecte des métriques GPU
+        # 🔥 Collecte des métriques système (GPU + CPU + RAM)
         # ----------------------------------------------------
 
         gpu_metrics = get_gpu_metrics()
@@ -165,6 +184,8 @@ class StepCheckpointSaver:
                 f"| Util {d['utilization_gpu_percent']}% "
                 f"| {d['temperature_c']}°C"
             )
+        else:
+            print("\n🧠 GPU : non disponible (CPU-only)")
 
         # ----------------------------------------------------
         # Injection dans les kwargs si non fournis
@@ -174,14 +195,30 @@ class StepCheckpointSaver:
         save_kwargs.setdefault("gpu_metrics", gpu_metrics)
 
         # ----------------------------------------------------
-        # Vérification des métriques live
+        # Calcul des PPL si non fournies
+        # ----------------------------------------------------
+
+        train_loss = save_kwargs.get("train_loss")
+        validation_loss = save_kwargs.get("validation_loss")
+
+        if save_kwargs.get("train_ppl") is None:
+            save_kwargs["train_ppl"] = safe_perplexity(train_loss)
+
+        if save_kwargs.get("validation_ppl") is None:
+            save_kwargs["validation_ppl"] = safe_perplexity(validation_loss)
+
+        # ----------------------------------------------------
+        # Affichage des métriques live
         # ----------------------------------------------------
 
         print(f"\n📊 Métriques live au step {step}:")
-        print(f"   train_loss     : {save_kwargs.get('train_loss')}")
-        print(f"   validation_loss: {save_kwargs.get('validation_loss')}")
-        print(f"   gradient_norm  : {save_kwargs.get('gradient_norm')}")
-        print(f"   epoch          : {save_kwargs.get('epoch')}")
+        print(f"   epoch           : {save_kwargs.get('epoch')}")
+        print(f"   train_loss      : {save_kwargs.get('train_loss')}")
+        print(f"   validation_loss : {save_kwargs.get('validation_loss')}")
+        print(f"   train_ppl       : {save_kwargs.get('train_ppl')}")
+        print(f"   validation_ppl  : {save_kwargs.get('validation_ppl')}")
+        print(f"   gradient_norm   : {save_kwargs.get('gradient_norm')}")
+        print(f"   duration_sec    : {save_kwargs.get('duration_seconds')}")
 
         # ----------------------------------------------------
         # Sauvegarde locale
@@ -242,11 +279,11 @@ class StepCheckpointSaver:
                 checkpoint_type="step",
                 epoch=save_kwargs.get("epoch", 0),
                 step=step,
-                duration_seconds=None,
+                duration_seconds=save_kwargs.get("duration_seconds"),
                 train_loss=save_kwargs.get("train_loss"),
                 validation_loss=save_kwargs.get("validation_loss"),
-                train_ppl=None,
-                validation_ppl=None,
+                train_ppl=save_kwargs.get("train_ppl"),
+                validation_ppl=save_kwargs.get("validation_ppl"),
                 gradient_norm=save_kwargs.get("gradient_norm"),
                 gpu_metrics=gpu_metrics,
             )

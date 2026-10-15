@@ -302,6 +302,9 @@ def calculate_perplexity(loss):
     Calcule la perplexité à partir de la loss.
     """
 
+    if loss is None:
+        return None
+
     try:
 
         return math.exp(loss)
@@ -727,6 +730,7 @@ def train_one_epoch(
     monitoring_path=MONITORING_JSON_PATH,
     monitoring_upload_interval=MONITORING_UPLOAD_INTERVAL,
     live_metrics=None,
+    training_timer=None,
 ):
     """
     Effectue une époque complète d'entraînement.
@@ -857,6 +861,12 @@ def train_one_epoch(
             live_metrics["train_loss"] = loss.item()
             live_metrics["gradient_norm"] = last_gradient_norm
 
+            if training_timer is not None:
+                live_metrics["duration_seconds"] = training_timer.elapsed()
+                live_metrics["duration"] = training_timer.format_duration(
+                    training_timer.elapsed()
+                )
+
         # ------------------------------------------------
         # 💓 HEARTBEAT
         # ------------------------------------------------
@@ -924,6 +934,8 @@ def train_one_epoch(
                     "train_loss": live_metrics["train_loss"],
                     "validation_loss": live_metrics.get("validation_loss", 0.0),
                     "gradient_norm": live_metrics["gradient_norm"],
+                    "duration_seconds": live_metrics.get("duration_seconds"),
+                    "duration": live_metrics.get("duration", "N/A"),
                 })
 
             step_saver.save(
@@ -1070,6 +1082,8 @@ def save_checkpoint(
     duration_seconds="N/A",
     batch_size="N/A",
     gpu_metrics=None,
+    train_ppl=None,
+    validation_ppl=None,
 ):
     """
     Sauvegarde le nouveau checkpoint.
@@ -1092,18 +1106,20 @@ def save_checkpoint(
     if gradient_norm is None:
         gradient_norm = 0.0
 
-    train_ppl = calculate_perplexity(
-        train_loss
-    )
+    # Calcul des PPL si non fournies
+    if train_ppl is None:
+        train_ppl = calculate_perplexity(train_loss)
 
-    validation_ppl = calculate_perplexity(
-        validation_loss
-    )
+    if validation_ppl is None:
+        validation_ppl = calculate_perplexity(validation_loss)
 
     checkpoint = {
 
         "epoch":
             epoch,
+
+        "step":
+            None,   # rempli par le saver si besoin
 
         "transformer_state_dict":
             transformer.state_dict(),
@@ -1142,7 +1158,7 @@ def save_checkpoint(
             duration_seconds,
 
         # ------------------------------------------------
-        # 🔥 MÉTRIQUES GPU AU MOMENT DE LA SAUVEGARDE
+        # 🔥 MÉTRIQUES GPU / CPU AU MOMENT DE LA SAUVEGARDE
         # ------------------------------------------------
 
         "gpu_metrics":
@@ -1694,8 +1710,12 @@ def main():
         "step": global_step,
         "epoch": previous_epoch,
         "train_loss": 0.0,
-        "validation_loss": 0.0,
+        "validation_loss": resume_state.get("last_validation_loss", 0.0),
+        "train_ppl": None,
+        "validation_ppl": None,
         "gradient_norm": 0.0,
+        "duration_seconds": resume_state["cumulative_duration_seconds"],
+        "duration": resume_state["cumulative_duration_human"],
     }
 
     # ========================================================
@@ -1779,6 +1799,7 @@ def main():
             monitoring_path=MONITORING_JSON_PATH,
             monitoring_upload_interval=MONITORING_UPLOAD_INTERVAL,
             live_metrics=live_metrics,
+            training_timer=training_timer,
         )
 
         # ----------------------------------------------------
@@ -1793,15 +1814,6 @@ def main():
         )
 
         # ----------------------------------------------------
-        # Mise à jour des métriques live (post-validation)
-        # ----------------------------------------------------
-
-        live_metrics["epoch"] = global_epoch
-        live_metrics["train_loss"] = train_loss
-        live_metrics["validation_loss"] = validation_loss
-        live_metrics["gradient_norm"] = gradient_norm
-
-        # ----------------------------------------------------
         # METRICS
         # ----------------------------------------------------
 
@@ -1814,6 +1826,17 @@ def main():
                 validation_loss
             )
         )
+
+        # ----------------------------------------------------
+        # Mise à jour des métriques live (post-validation)
+        # ----------------------------------------------------
+
+        live_metrics["epoch"] = global_epoch
+        live_metrics["train_loss"] = train_loss
+        live_metrics["validation_loss"] = validation_loss
+        live_metrics["train_ppl"] = train_ppl
+        live_metrics["validation_ppl"] = validation_ppl
+        live_metrics["gradient_norm"] = gradient_norm
 
         print(
             f"\nTrain loss       : "
@@ -1856,6 +1879,8 @@ def main():
             vocab_size=vocab_size,
             batch_size=BATCH_SIZE,
             gpu_metrics=get_gpu_metrics(),
+            train_ppl=train_ppl,
+            validation_ppl=validation_ppl,
         )
 
         # ----------------------------------------------------
@@ -1964,6 +1989,8 @@ def main():
             duration_seconds=training_duration,
             batch_size=BATCH_SIZE,
             gpu_metrics=get_gpu_metrics(),
+            train_ppl=calculate_perplexity(train_loss),
+            validation_ppl=calculate_perplexity(validation_loss),
         )
 
     # ========================================================
