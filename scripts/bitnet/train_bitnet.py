@@ -65,6 +65,7 @@ from scripts.bitnet.heartbeat.heartbeat import (
 
 from scripts.bitnet.heartbeat.gpu_monitor import (
     get_gpu_metrics,
+    write_monitoring_json,
 )
 
 from scripts.bitnet.verif_save.create_modif_json_checkpoint import (
@@ -89,6 +90,17 @@ DEVICE = torch.device(
     if torch.cuda.is_available()
     else "cpu"
 )
+
+
+# ============================================================
+# CONSTANTES MONITORING
+# ============================================================
+
+MONITORING_JSON_PATH = Path("monitoring.json")
+
+# Fréquence d'upload de monitoring.json vers Hugging Face.
+# ⚠️ Ne pas descendre en dessous de 20 (rate limits HF).
+MONITORING_UPLOAD_INTERVAL = 50
 
 
 # ============================================================
@@ -323,6 +335,40 @@ def calculate_gradient_norm(model):
         )
 
     return total_norm ** 0.5
+
+
+# ============================================================
+# UPLOAD MONITORING.JSON VERS HF
+# ============================================================
+
+def upload_monitoring_to_hub():
+    """
+    Upload monitoring.json vers Hugging Face.
+
+    Ne bloque jamais l'entraînement en cas d'erreur.
+    """
+
+    try:
+
+        from scripts.hub.hub_sync import (
+            upload_file_to_hub,
+        )
+
+        upload_file_to_hub(
+            MONITORING_JSON_PATH,
+            remote_path="monitoring.json",
+        )
+
+        return True
+
+    except Exception as error:
+
+        print(
+            f"\n⚠️ Upload monitoring.json échoué : "
+            f"{error}"
+        )
+
+        return False
 
 
 # ============================================================
@@ -669,6 +715,9 @@ def train_one_epoch(
     save_checkpoint_fn=None,
     save_checkpoint_kwargs=None,
     heartbeat=None,
+    epoch=None,
+    monitoring_path=MONITORING_JSON_PATH,
+    monitoring_upload_interval=MONITORING_UPLOAD_INTERVAL,
 ):
     """
     Effectue une époque complète d'entraînement.
@@ -798,6 +847,43 @@ def train_one_epoch(
                 step=global_step,
                 loss=loss.item(),
             )
+
+        # ------------------------------------------------
+        # 📊 MONITORING SYSTÈME (CPU + GPU + RAM)
+        # ------------------------------------------------
+
+        try:
+
+            write_monitoring_json(
+                step=global_step,
+                loss=loss.item(),
+                gradient_norm=last_gradient_norm,
+                epoch=epoch,
+                path=monitoring_path,
+            )
+
+        except Exception as error:
+
+            print(
+                f"\n⚠️ Monitoring échoué : "
+                f"{error}"
+            )
+
+        # ------------------------------------------------
+        # 📤 UPLOAD PÉRIODIQUE DE monitoring.json
+        # ------------------------------------------------
+
+        if (
+            monitoring_upload_interval > 0
+            and global_step % monitoring_upload_interval == 0
+        ):
+
+            print(
+                f"\n📤 Upload monitoring.json "
+                f"(step {global_step})..."
+            )
+
+            upload_monitoring_to_hub()
 
         # ------------------------------------------------
         # Sauvegarde périodique
@@ -1561,6 +1647,33 @@ def main():
     print(f"\n🔢 Global step repris : {global_step}")
 
     # ========================================================
+    # MONITORING INITIAL
+    # ========================================================
+
+    try:
+
+        write_monitoring_json(
+            step=global_step,
+            loss=None,
+            epoch=previous_epoch,
+            path=MONITORING_JSON_PATH,
+        )
+
+        print(
+            f"\n📊 monitoring.json initialisé : "
+            f"{MONITORING_JSON_PATH}"
+        )
+
+        upload_monitoring_to_hub()
+
+    except Exception as error:
+
+        print(
+            f"\n⚠️ Monitoring initial échoué : "
+            f"{error}"
+        )
+
+    # ========================================================
     # EPOCHS
     # ========================================================
 
@@ -1614,6 +1727,9 @@ def main():
                 "batch_size": BATCH_SIZE,
             },
             heartbeat=heartbeat,
+            epoch=global_epoch,
+            monitoring_path=MONITORING_JSON_PATH,
+            monitoring_upload_interval=MONITORING_UPLOAD_INTERVAL,
         )
 
         # ----------------------------------------------------
@@ -1727,6 +1843,17 @@ def main():
                 f"{error}"
             )
 
+        # ----------------------------------------------------
+        # 📤 UPLOAD monitoring.json EN FIN D'ÉPOQUE
+        # ----------------------------------------------------
+
+        print(
+            f"\n📤 Upload monitoring.json "
+            f"(fin époque {global_epoch})..."
+        )
+
+        upload_monitoring_to_hub()
+
     # ========================================================
     # DURÉE
     # ========================================================
@@ -1813,7 +1940,7 @@ def main():
     )
 
     # ========================================================
-    # UPLOAD FINAL (checkpoint + résultat)
+    # UPLOAD FINAL (checkpoint + résultat + monitoring)
     # ========================================================
 
     try:
@@ -1849,6 +1976,9 @@ def main():
                 f"{Path(result_path).name}"
             ),
         )
+
+        # 📤 Upload final de monitoring.json
+        upload_monitoring_to_hub()
 
     except Exception as error:
 
