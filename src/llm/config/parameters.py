@@ -15,7 +15,7 @@ from pathlib import Path
 #
 #     MAX_DOCUMENT = 100
 #
-MAX_DOCUMENT = 50000
+MAX_DOCUMENT = 5
 
 # Proportion du dataset utilisée pour l'entraînement.
 TRAIN_RATIO = 0.80
@@ -44,7 +44,7 @@ RANDOM_SEED = 42
 #     ou 7000
 #     etc.
 #
-MAX_VOCAB_SIZE = 20000
+MAX_VOCAB_SIZE = 500
 
 MIN_FREQUENCY = 2
 
@@ -67,13 +67,13 @@ BLOCK_SIZE = 256
 # BITNET / TRANSFORMER
 # ============================================================
 
-D_MODEL = 512
+D_MODEL = 256
 
-NUM_HEADS = 8
+NUM_HEADS = 2
 
-HIDDEN_DIM = 1680
+HIDDEN_DIM = 500
 
-NUM_BLOCKS = 4
+NUM_BLOCKS = 2
 
 MAX_SEQUENCE_LENGTH = BLOCK_SIZE
 
@@ -82,11 +82,11 @@ MAX_SEQUENCE_LENGTH = BLOCK_SIZE
 # ENTRAÎNEMENT
 # ============================================================
 
-BATCH_SIZE = 4
+BATCH_SIZE = 2
 
 EPOCHS = 2
 
-LEARNING_RATE = 3e-4
+LEARNING_RATE = 3e-5
 
 WEIGHT_DECAY = 0.01
 
