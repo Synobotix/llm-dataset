@@ -105,6 +105,10 @@ TRAINING_STATE_PATH = Path("training_state.json")
 # ⚠️ Ne pas descendre en dessous de 20 (rate limits HF).
 MONITORING_UPLOAD_INTERVAL = 40
 
+# Fréquence d'appel de nvidia-smi (sous-processus coûteux).
+# Tous les N steps. Entre, on utilise uniquement torch.cuda.
+NVIDIA_SMI_INTERVAL = 20
+
 
 # ============================================================
 # DATASET
@@ -870,6 +874,8 @@ def train_one_epoch(
     Retourne (loss_moyenne, gradient_norm, global_step).
     """
 
+    import time as _time
+
     transformer.train()
 
     lm_head.train()
@@ -879,6 +885,8 @@ def train_one_epoch(
     total_tokens = 0
 
     last_gradient_norm = 0.0
+
+    _last_heartbeat_time = _time.time()
 
     for batch_index, batch in enumerate(
         dataloader,
@@ -985,6 +993,20 @@ def train_one_epoch(
         global_step += 1
 
         # ------------------------------------------------
+        # 💓 HEARTBEAT PRINT (toutes les 15s)
+        # ------------------------------------------------
+
+        if _time.time() - _last_heartbeat_time > 15.0:
+
+            print(
+                f"\n💓 Heartbeat step {global_step} "
+                f"@ {_time.strftime('%H:%M:%S')}",
+                flush=True,
+            )
+
+            _last_heartbeat_time = _time.time()
+
+        # ------------------------------------------------
         # 📊 Mise à jour des métriques live
         # ------------------------------------------------
 
@@ -1024,6 +1046,9 @@ def train_one_epoch(
                 gradient_norm=last_gradient_norm,
                 epoch=epoch,
                 path=monitoring_path,
+                use_nvidia_smi=(
+                    global_step % NVIDIA_SMI_INTERVAL == 0
+                ),
             )
 
         except Exception as error:
@@ -1089,6 +1114,7 @@ def train_one_epoch(
             f" | Loss : "
             f"{loss.item():.6f}",
             end="",
+            flush=True,
         )
 
     print()
@@ -1952,6 +1978,7 @@ def main():
             loss=None,
             epoch=previous_epoch,
             path=MONITORING_JSON_PATH,
+            use_nvidia_smi=True,
         )
 
         print(
@@ -2101,7 +2128,7 @@ def main():
             gradient_norm=gradient_norm,
             vocab_size=vocab_size,
             batch_size=BATCH_SIZE,
-            gpu_metrics=get_gpu_metrics(),
+            gpu_metrics=get_gpu_metrics(use_nvidia_smi=True),
             train_ppl=train_ppl,
             validation_ppl=validation_ppl,
         )
@@ -2121,7 +2148,7 @@ def main():
             train_ppl=train_ppl,
             validation_ppl=validation_ppl,
             gradient_norm=gradient_norm,
-            gpu_metrics=get_gpu_metrics(),
+            gpu_metrics=get_gpu_metrics(use_nvidia_smi=True),
         )
 
         # ----------------------------------------------------
@@ -2211,7 +2238,7 @@ def main():
             ),
             duration_seconds=training_duration,
             batch_size=BATCH_SIZE,
-            gpu_metrics=get_gpu_metrics(),
+            gpu_metrics=get_gpu_metrics(use_nvidia_smi=True),
             train_ppl=calculate_perplexity(train_loss),
             validation_ppl=calculate_perplexity(validation_loss),
         )
@@ -2335,4 +2362,28 @@ def main():
 
 if __name__ == "__main__":
 
-    main()
+    import traceback
+    from datetime import datetime
+
+    try:
+
+        main()
+
+    except Exception as error:
+
+        crash_time = datetime.now().isoformat()
+
+        print("\n" + "=" * 70)
+        print(f"❌ CRASH À {crash_time}")
+        print("=" * 70)
+
+        traceback.print_exc()
+
+        # Écrire dans un fichier pour analyse post-mortem
+        with open("crash_log.txt", "w", encoding="utf-8") as f:
+            f.write(f"Crash à {crash_time}\n\n")
+            traceback.print_exc(file=f)
+
+        print("\n📝 Trace complète écrite dans crash_log.txt")
+
+        raise

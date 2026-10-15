@@ -4,13 +4,14 @@
 Collecte des métriques GPU + CPU + RAM + Python.
 
 Écrit :
-- monitoring.json         : snapshot courant (écrasé)
+- monitoring.json          : snapshot courant (écrasé)
 - monitoring_history.jsonl : historique complet (append)
 - training_state.json      : état de reprise
 
-⚠️ Cette version évite gc.get_objects() qui peut faire exploser
-la RAM (pic >20 Go observé sur Kaggle) et générer des millions
-de warnings.
+⚠️ Optimisations :
+- Pas de gc.get_objects() (fuite RAM évitée)
+- nvidia-smi appelé uniquement si demandé (use_nvidia_smi=True)
+- torch.cuda.memory_stats() est O(1) et toujours disponible
 """
 
 import gc
@@ -39,12 +40,18 @@ TRAINING_STATE_PATH = Path("training_state.json")
 
 
 # ============================================================
-# MÉTRIQUES GPU (nvidia-smi + torch)
+# MÉTRIQUES GPU (torch toujours, nvidia-smi si demandé)
 # ============================================================
 
-def get_gpu_metrics():
+def get_gpu_metrics(use_nvidia_smi: bool = False):
     """
     Retourne un dictionnaire des métriques GPU.
+
+    Args:
+        use_nvidia_smi: si True, appelle nvidia-smi pour les
+            métriques matérielles (temperature, power, etc.).
+            Si False, utilise uniquement torch.cuda (O(1),
+            pas de sous-processus, plus rapide et plus léger).
     """
 
     metrics = {
@@ -61,98 +68,101 @@ def get_gpu_metrics():
     metrics["device_count"] = torch.cuda.device_count()
 
     # --------------------------------------------------------
-    # Via nvidia-smi
+    # Métriques torch (toujours, O(1))
     # --------------------------------------------------------
 
     try:
-        result = subprocess.run(
-            [
-                "nvidia-smi",
-                "--query-gpu=index,name,memory.used,memory.total,"
-                "utilization.gpu,temperature.gpu,power.draw",
-                "--format=csv,noheader,nounits",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=5,
+
+        allocated = torch.cuda.memory_allocated() / 1e9
+        reserved = torch.cuda.memory_reserved() / 1e9
+        max_allocated = torch.cuda.max_memory_allocated() / 1e9
+        max_reserved = torch.cuda.max_memory_reserved() / 1e9
+
+        total_mem = (
+            torch.cuda.get_device_properties(0).total_memory / 1e9
         )
 
-        for line in result.stdout.strip().splitlines():
-            parts = [p.strip() for p in line.split(",")]
-            if len(parts) != 7:
-                continue
+        metrics["torch"] = {
+            "allocated_go": round(allocated, 3),
+            "reserved_go": round(reserved, 3),
+            "max_allocated_go": round(max_allocated, 3),
+            "max_reserved_go": round(max_reserved, 3),
+            "total_go": round(total_mem, 3),
+        }
 
-            (index, name, mem_used, mem_total, util, temp, power) = parts
-
-            try:
-                mem_used = int(float(mem_used))
-                mem_total = int(float(mem_total))
-                util = int(float(util))
-                temp = int(float(temp))
-                power_val = float(power)
-            except ValueError:
-                continue
-
-            metrics["devices"].append({
-                "index": int(index),
-                "name": name,
-                "memory_used_mb": mem_used,
-                "memory_total_mb": mem_total,
-                "memory_percent": round(
-                    mem_used / mem_total * 100, 2
-                ) if mem_total > 0 else 0.0,
-                "utilization_gpu_percent": util,
-                "temperature_c": temp,
-                "power_w": power_val,
-            })
-
-    except Exception as error:
-        metrics["nvidia_smi_error"] = str(error)
-
-    # --------------------------------------------------------
-    # Via PyTorch (mémoire détaillée)
-    # --------------------------------------------------------
-
-    try:
-        if torch.cuda.is_available():
-
-            allocated = torch.cuda.memory_allocated() / 1e9
-            reserved = torch.cuda.memory_reserved() / 1e9
-            max_allocated = torch.cuda.max_memory_allocated() / 1e9
-            max_reserved = torch.cuda.max_memory_reserved() / 1e9
-
-            total_mem = (
-                torch.cuda.get_device_properties(0).total_memory / 1e9
+        # Stats détaillées (O(1))
+        try:
+            stats = torch.cuda.memory_stats()
+            metrics["torch"]["num_alloc_retries"] = stats.get(
+                "num_alloc_retries", 0
             )
-
-            metrics["torch"] = {
-                "allocated_go": round(allocated, 3),
-                "reserved_go": round(reserved, 3),
-                "max_allocated_go": round(max_allocated, 3),
-                "max_reserved_go": round(max_reserved, 3),
-                "total_go": round(total_mem, 3),
-            }
-
-            # Stats détaillées (O(1), pas de parcours d'objets)
-            try:
-                stats = torch.cuda.memory_stats()
-                metrics["torch"]["num_alloc_retries"] = stats.get(
-                    "num_alloc_retries", 0
-                )
-                metrics["torch"]["num_ooms"] = stats.get(
-                    "num_ooms", 0
-                )
-                metrics["torch"]["active_bytes"] = round(
-                    stats.get("active_bytes.all.current", 0) / 1e9, 3
-                )
-                metrics["torch"]["inactive_split_bytes"] = round(
-                    stats.get("inactive_split_bytes.all.current", 0) / 1e9, 3
-                )
-            except Exception:
-                pass
+            metrics["torch"]["num_ooms"] = stats.get(
+                "num_ooms", 0
+            )
+            metrics["torch"]["active_bytes"] = round(
+                stats.get("active_bytes.all.current", 0) / 1e9, 3
+            )
+            metrics["torch"]["inactive_split_bytes"] = round(
+                stats.get("inactive_split_bytes.all.current", 0) / 1e9, 3
+            )
+        except Exception:
+            pass
 
     except Exception as error:
         metrics["torch"]["error"] = str(error)
+
+    # --------------------------------------------------------
+    # Métriques nvidia-smi (uniquement si demandé)
+    # --------------------------------------------------------
+
+    if use_nvidia_smi:
+
+        try:
+
+            result = subprocess.run(
+                [
+                    "nvidia-smi",
+                    "--query-gpu=index,name,memory.used,memory.total,"
+                    "utilization.gpu,temperature.gpu,power.draw",
+                    "--format=csv,noheader,nounits",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+
+            for line in result.stdout.strip().splitlines():
+
+                parts = [p.strip() for p in line.split(",")]
+                if len(parts) != 7:
+                    continue
+
+                (index, name, mem_used, mem_total, util, temp, power) = parts
+
+                try:
+                    mem_used = int(float(mem_used))
+                    mem_total = int(float(mem_total))
+                    util = int(float(util))
+                    temp = int(float(temp))
+                    power_val = float(power)
+                except ValueError:
+                    continue
+
+                metrics["devices"].append({
+                    "index": int(index),
+                    "name": name,
+                    "memory_used_mb": mem_used,
+                    "memory_total_mb": mem_total,
+                    "memory_percent": round(
+                        mem_used / mem_total * 100, 2
+                    ) if mem_total > 0 else 0.0,
+                    "utilization_gpu_percent": util,
+                    "temperature_c": temp,
+                    "power_w": power_val,
+                })
+
+        except Exception as error:
+            metrics["nvidia_smi_error"] = str(error)
 
     return metrics
 
@@ -182,27 +192,34 @@ def get_cpu_metrics():
     # --------------------------------------------------------
 
     try:
+
         pid = os.getpid()
         proc_path = Path(f"/proc/{pid}/status")
 
         if proc_path.exists():
+
             with proc_path.open() as f:
+
                 for line in f:
+
                     if line.startswith("VmRSS:"):
                         value_kb = int(line.split()[1])
                         metrics["process_ram"]["rss_go"] = round(
                             value_kb / 1024 / 1024, 3
                         )
+
                     elif line.startswith("VmSize:"):
                         value_kb = int(line.split()[1])
                         metrics["process_ram"]["vms_go"] = round(
                             value_kb / 1024 / 1024, 3
                         )
+
                     elif line.startswith("VmPeak:"):
                         value_kb = int(line.split()[1])
                         metrics["process_ram"]["peak_go"] = round(
                             value_kb / 1024 / 1024, 3
                         )
+
     except Exception as error:
         metrics["process_ram"]["error"] = str(error)
 
@@ -211,11 +228,15 @@ def get_cpu_metrics():
     # --------------------------------------------------------
 
     try:
+
         meminfo = Path("/proc/meminfo")
 
         if meminfo.exists():
+
             with meminfo.open() as f:
+
                 info = {}
+
                 for line in f:
                     key, val = line.split(":", 1)
                     info[key.strip()] = val.strip()
@@ -236,10 +257,12 @@ def get_cpu_metrics():
 
             total = metrics["ram"]["total_go"]
             available = metrics["ram"]["available_go"]
+
             if total > 0:
                 metrics["ram"]["percent"] = round(
                     (1 - available / total) * 100, 2
                 )
+
     except Exception as error:
         metrics["ram"]["error"] = str(error)
 
@@ -248,6 +271,7 @@ def get_cpu_metrics():
     # --------------------------------------------------------
 
     if PSUTIL_AVAILABLE:
+
         try:
             metrics["cpu"] = {
                 "percent": psutil.cpu_percent(interval=None),
@@ -296,6 +320,7 @@ def get_python_metrics():
     metrics = {}
 
     try:
+
         # Compteurs GC (O(1))
         gc_counts = gc.get_count()
         metrics["gc_counts"] = {
@@ -325,14 +350,14 @@ def get_python_metrics():
 # MÉTRIQUES COMBINÉES
 # ============================================================
 
-def get_system_metrics():
+def get_system_metrics(use_nvidia_smi: bool = False):
     """
     Retourne toutes les métriques : GPU + CPU + RAM + Python.
     """
 
     return {
         "timestamp": time.time(),
-        "gpu": get_gpu_metrics(),
+        "gpu": get_gpu_metrics(use_nvidia_smi=use_nvidia_smi),
         "cpu": get_cpu_metrics(),
         "python": get_python_metrics(),
     }
@@ -350,12 +375,19 @@ def write_monitoring_json(
     extra: dict = None,
     path: Path = MONITORING_JSON_PATH,
     history_path: Path = MONITORING_HISTORY_PATH,
+    use_nvidia_smi: bool = False,
 ):
     """
     Écrit :
-    - monitoring.json         : snapshot courant (écrasé)
+    - monitoring.json          : snapshot courant (écrasé)
     - monitoring_history.jsonl : historique complet (append)
     - training_state.json      : état de reprise
+
+    Args:
+        use_nvidia_smi: si True, appelle nvidia-smi pour les
+            métriques matérielles. À utiliser tous les N steps
+            (par exemple 20) pour éviter de créer trop de
+            sous-processus.
     """
 
     payload = {
@@ -364,7 +396,7 @@ def write_monitoring_json(
         "loss": loss,
         "gradient_norm": gradient_norm,
         "updated_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
-        "system": get_system_metrics(),
+        "system": get_system_metrics(use_nvidia_smi=use_nvidia_smi),
     }
 
     if extra:
@@ -378,8 +410,10 @@ def write_monitoring_json(
     path.parent.mkdir(parents=True, exist_ok=True)
 
     tmp_path = path.with_suffix(".tmp")
+
     with tmp_path.open("w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2, ensure_ascii=False)
+
     tmp_path.replace(path)
 
     # --------------------------------------------------------
@@ -387,10 +421,10 @@ def write_monitoring_json(
     # --------------------------------------------------------
 
     try:
+
         history_path = Path(history_path)
         history_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Version condensée pour l'historique
         history_entry = {
             "step": step,
             "epoch": epoch,
@@ -432,8 +466,10 @@ def write_monitoring_json(
 
     state_path = TRAINING_STATE_PATH
     tmp_state = state_path.with_suffix(".tmp")
+
     with tmp_state.open("w", encoding="utf-8") as f:
         json.dump(state_payload, f, indent=2, ensure_ascii=False)
+
     tmp_state.replace(state_path)
 
     return payload
