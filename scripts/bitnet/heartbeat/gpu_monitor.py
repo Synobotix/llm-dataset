@@ -1,13 +1,16 @@
 # scripts/bitnet/heartbeat/gpu_monitor.py
 
 """
-Collecte des métriques GPU + CPU + RAM + mémoire Python.
+Collecte des métriques GPU + CPU + RAM + Python.
 
 Écrit :
 - monitoring.json         : snapshot courant (écrasé)
 - monitoring_history.jsonl : historique complet (append)
+- training_state.json      : état de reprise
 
-Objectif : diagnostiquer les fuites mémoire et les crashs.
+⚠️ Cette version évite gc.get_objects() qui peut faire exploser
+la RAM (pic >20 Go observé sur Kaggle) et générer des millions
+de warnings.
 """
 
 import gc
@@ -57,7 +60,9 @@ def get_gpu_metrics():
     metrics["available"] = True
     metrics["device_count"] = torch.cuda.device_count()
 
-    # ---------- Via nvidia-smi ----------
+    # --------------------------------------------------------
+    # Via nvidia-smi
+    # --------------------------------------------------------
 
     try:
         result = subprocess.run(
@@ -104,11 +109,13 @@ def get_gpu_metrics():
     except Exception as error:
         metrics["nvidia_smi_error"] = str(error)
 
-    # ---------- Via PyTorch (mémoire détaillée) ----------
+    # --------------------------------------------------------
+    # Via PyTorch (mémoire détaillée)
+    # --------------------------------------------------------
 
     try:
         if torch.cuda.is_available():
-            # Mémoire allouée / réservée
+
             allocated = torch.cuda.memory_allocated() / 1e9
             reserved = torch.cuda.memory_reserved() / 1e9
             max_allocated = torch.cuda.max_memory_allocated() / 1e9
@@ -126,7 +133,7 @@ def get_gpu_metrics():
                 "total_go": round(total_mem, 3),
             }
 
-            # Stats détaillées (si disponibles)
+            # Stats détaillées (O(1), pas de parcours d'objets)
             try:
                 stats = torch.cuda.memory_stats()
                 metrics["torch"]["num_alloc_retries"] = stats.get(
@@ -151,12 +158,14 @@ def get_gpu_metrics():
 
 
 # ============================================================
-# MÉTRIQUES CPU + RAM (psutil si dispo, sinon /proc)
+# MÉTRIQUES CPU + RAM (via /proc, sans psutil obligatoire)
 # ============================================================
 
 def get_cpu_metrics():
     """
     Retourne un dictionnaire des métriques CPU + RAM + disque.
+
+    Utilise /proc quand psutil n'est pas disponible.
     """
 
     metrics = {
@@ -168,7 +177,9 @@ def get_cpu_metrics():
         "load_avg": {},
     }
 
-    # ---------- Process RAM (toujours dispo via /proc) ----------
+    # --------------------------------------------------------
+    # Process RAM (toujours dispo via /proc)
+    # --------------------------------------------------------
 
     try:
         pid = os.getpid()
@@ -178,7 +189,6 @@ def get_cpu_metrics():
             with proc_path.open() as f:
                 for line in f:
                     if line.startswith("VmRSS:"):
-                        # Format : "VmRSS:    123456 kB"
                         value_kb = int(line.split()[1])
                         metrics["process_ram"]["rss_go"] = round(
                             value_kb / 1024 / 1024, 3
@@ -196,7 +206,9 @@ def get_cpu_metrics():
     except Exception as error:
         metrics["process_ram"]["error"] = str(error)
 
-    # ---------- RAM système (via /proc/meminfo) ----------
+    # --------------------------------------------------------
+    # RAM système (via /proc/meminfo)
+    # --------------------------------------------------------
 
     try:
         meminfo = Path("/proc/meminfo")
@@ -209,7 +221,6 @@ def get_cpu_metrics():
                     info[key.strip()] = val.strip()
 
             def to_go(value_str):
-                # Format : "16384000 kB"
                 kb = int(value_str.split()[0])
                 return round(kb / 1024 / 1024, 3)
 
@@ -232,7 +243,9 @@ def get_cpu_metrics():
     except Exception as error:
         metrics["ram"]["error"] = str(error)
 
-    # ---------- CPU + disque + load (psutil si dispo) ----------
+    # --------------------------------------------------------
+    # CPU + disque + load (psutil si dispo)
+    # --------------------------------------------------------
 
     if PSUTIL_AVAILABLE:
         try:
@@ -269,23 +282,21 @@ def get_cpu_metrics():
 
 
 # ============================================================
-# MÉTRIQUES PYTHON (gc, tenseurs, objets)
+# MÉTRIQUES PYTHON (LÉGER — SANS gc.get_objects)
 # ============================================================
 
 def get_python_metrics():
     """
-    Retourne des métriques sur l'état de la mémoire Python.
+    Retourne des métriques légères sur l'état Python.
 
-    Utile pour détecter les fuites :
-    - Nombre d'objets trackés par gc
-    - Nombre de tenseurs vivants
-    - Nombre de tenseurs GPU
+    ⚠️ NE PAS utiliser gc.get_objects() : trop coûteux,
+    peut générer des millions de warnings et saturer la mémoire.
     """
 
     metrics = {}
 
     try:
-        # Nombre d'objets trackés par le garbage collector
+        # Compteurs GC (O(1))
         gc_counts = gc.get_count()
         metrics["gc_counts"] = {
             "gen0": gc_counts[0],
@@ -293,7 +304,7 @@ def get_python_metrics():
             "gen2": gc_counts[2],
         }
 
-        # Nombre d'objets par génération
+        # Stats GC (O(1))
         stats = gc.get_stats()
         metrics["gc_stats"] = [
             {
@@ -303,28 +314,6 @@ def get_python_metrics():
             }
             for s in stats
         ]
-
-        # Nombre total d'objets trackés
-        all_objects = gc.get_objects()
-        metrics["tracked_objects"] = len(all_objects)
-
-        # Compter les tenseurs torch vivants
-        tensor_count = 0
-        cuda_tensor_count = 0
-
-        for obj in all_objects:
-            try:
-                if isinstance(obj, torch.Tensor):
-                    tensor_count += 1
-                    if obj.is_cuda:
-                        cuda_tensor_count += 1
-            except Exception:
-                pass
-
-        metrics["torch_tensors"] = {
-            "total": tensor_count,
-            "cuda": cuda_tensor_count,
-        }
 
     except Exception as error:
         metrics["error"] = str(error)
@@ -350,7 +339,7 @@ def get_system_metrics():
 
 
 # ============================================================
-# ÉCRITURE DE MONITORING.JSON + HISTORIQUE
+# ÉCRITURE DE MONITORING.JSON + HISTORIQUE + STATE
 # ============================================================
 
 def write_monitoring_json(
@@ -366,9 +355,7 @@ def write_monitoring_json(
     Écrit :
     - monitoring.json         : snapshot courant (écrasé)
     - monitoring_history.jsonl : historique complet (append)
-
-    Le fichier .jsonl permet d'analyser après coup
-    l'évolution de la mémoire (fuite, OOM, etc.).
+    - training_state.json      : état de reprise
     """
 
     payload = {
