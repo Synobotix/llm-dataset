@@ -8,6 +8,8 @@ src/llm/config/parameter.py
 
 From scratch:
 
+# il faut ajouter le path de poetry avec PYTHONPATH
+
 # supprime tous les datas sur huggin face hub
 poetry run python -m scripts.bitnet.reset_data.delete_all_data_json_jsonl_pt_hf
 

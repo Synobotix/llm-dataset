@@ -67,13 +67,13 @@ BLOCK_SIZE = 512
 # BITNET / TRANSFORMER
 # ============================================================
 
-D_MODEL = 512
+D_MODEL = 640
 
-NUM_HEADS = 2
+NUM_HEADS = 4
 
 HIDDEN_DIM = 500
 
-NUM_BLOCKS = 2
+NUM_BLOCKS = 6
 
 MAX_SEQUENCE_LENGTH = BLOCK_SIZE
 
@@ -82,7 +82,7 @@ MAX_SEQUENCE_LENGTH = BLOCK_SIZE
 # ENTRAÎNEMENT
 # ============================================================
 
-BATCH_SIZE = 4
+BATCH_SIZE = 6
 
 EPOCHS = 2
 
@@ -97,7 +97,7 @@ GRADIENT_CLIP = 1.0
 # ============================================================
 
 # Sauvegarde un checkpoint tous les N steps
-SAVE_EVERY_N_STEPS = 10   # ← à changer ici
+SAVE_EVERY_N_STEPS = 500   # ← à changer ici
 
 # Activer le nettoyage automatique des anciens checkpoints step
 AUTO_CLEAN_STEP_CHECKPOINTS = True
