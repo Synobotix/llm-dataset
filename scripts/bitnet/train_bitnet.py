@@ -103,11 +103,11 @@ TRAINING_STATE_PATH = Path("training_state.json")
 
 # Fréquence d'upload de monitoring.json vers Hugging Face.
 # ⚠️ Ne pas descendre en dessous de 20 (rate limits HF).
-MONITORING_UPLOAD_INTERVAL = 40
+MONITORING_UPLOAD_INTERVAL = 1000
 
 # Fréquence d'appel de nvidia-smi (sous-processus coûteux).
 # Tous les N steps. Entre, on utilise uniquement torch.cuda.
-NVIDIA_SMI_INTERVAL = 20
+NVIDIA_SMI_INTERVAL = 1000
 
 
 # ============================================================
